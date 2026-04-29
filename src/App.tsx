@@ -112,8 +112,8 @@ function InstallBanner() {
       className="fixed top-4 left-4 right-4 z-[9999] bg-blue-600 text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between border border-blue-400/30 backdrop-blur-md bg-opacity-95"
     >
       <div className="flex items-center gap-3">
-        <div className="bg-white/20 p-2 rounded-xl">
-          <Monitor className="w-5 h-5 text-white" />
+        <div className="bg-white/20 p-1 rounded-xl">
+          <img src="https://storage.googleapis.com/test-media-67890/input_file_0.png" alt="Logo" className="w-6 h-6 object-contain" />
         </div>
         <div>
           <p className="text-sm font-bold leading-tight">Instalar Aplicación</p>
@@ -382,8 +382,8 @@ export default function App() {
               >
                 <div className="flex justify-between items-center mb-10">
                   <div className="flex items-center gap-2">
-                    <ShieldAlert className="w-6 h-6 text-emerald-500" />
-                    <span className="font-bold text-lg tracking-tight">LimpiezaApp</span>
+                    <img src="https://storage.googleapis.com/test-media-67890/input_file_0.png" alt="Logo" className="w-12 h-12 object-contain" />
+                    <span className="font-bold text-lg tracking-tight">Limpieza Arevalo</span>
                   </div>
                   <button onClick={() => setMenuOpen(false)} className="p-2 hover:bg-slate-100 rounded-full text-slate-400">
                     <X className="w-6 h-6" />
@@ -487,8 +487,8 @@ export default function App() {
               <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold leading-none mb-1">{user.rol}</p>
               <h2 className="text-sm font-bold text-slate-800 leading-tight truncate max-w-[120px]">{user.nombre}</h2>
             </div>
-            <div className="bg-emerald-50 p-1.5 rounded-xl border border-emerald-100">
-              <UserCircle className="w-6 h-6 text-emerald-500" />
+            <div className="w-10 h-10 rounded-xl overflow-hidden border border-emerald-100">
+              <img src="https://storage.googleapis.com/test-media-67890/input_file_0.png" alt="User" className="w-full h-full object-cover" />
             </div>
           </div>
         </header>
@@ -1165,8 +1165,8 @@ function LoginScreen({ onLogin }: { onLogin: (user: Operario, d: string) => void
         <div className="absolute top-0 left-0 w-full h-2 bg-blue-500"></div>
 
         <div className="mb-8 text-center flex flex-col items-center">
-          <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex justify-center items-center mb-4">
-            <UserCircle className="w-10 h-10" />
+          <div className="w-32 h-32 mb-4">
+            <img src="https://storage.googleapis.com/test-media-67890/input_file_0.png" alt="Logo Arevalo" className="w-full h-full object-contain" />
           </div>
           <h1 className="text-2xl font-black text-slate-800 tracking-tight">Acceso Rápido</h1>
           <p className="text-slate-500 font-medium text-sm mt-1">Sector de Limpieza</p>
@@ -2236,10 +2236,8 @@ function SupervisorDashboard({ user, onLogout }: { user: Operario, onLogout: () 
             >
               <div className="flex justify-between items-center mb-10">
                 <div className="flex items-center gap-3">
-                  <div className="bg-blue-600 p-2 rounded-xl">
-                    <ShieldAlert className="w-6 h-6 text-white" />
-                  </div>
-                  <span className="font-bold text-xl tracking-tight text-slate-800">Panel Control</span>
+                  <img src="https://storage.googleapis.com/test-media-67890/input_file_0.png" alt="Logo" className="w-14 h-14 object-contain" />
+                  <span className="font-bold text-xl tracking-tight text-slate-800">Panel Arevalo</span>
                 </div>
                 <button onClick={() => setMenuOpen(false)} className="p-2 hover:bg-slate-100 rounded-full text-slate-400">
                   <X className="w-6 h-6" />
@@ -2324,10 +2322,8 @@ function SupervisorDashboard({ user, onLogout }: { user: Operario, onLogout: () 
             <Menu className="w-6 h-6" />
           </button>
           <div className="hidden sm:flex items-center gap-3 ml-2">
-            <div className="bg-blue-600 p-2.5 rounded-2xl shadow-lg shadow-blue-100">
-              <ClipboardList className="w-5 h-5 text-white" />
-            </div>
-            <h1 className="font-black text-xl tracking-tighter text-slate-900">Limpieza<span className="text-blue-600 underline decoration-4 decoration-blue-100 underline-offset-4">Panel</span></h1>
+            <img src="https://storage.googleapis.com/test-media-67890/input_file_0.png" alt="Logo" className="w-12 h-12 object-contain" />
+            <h1 className="font-black text-xl tracking-tighter text-slate-900">Limpieza<span className="text-blue-600 underline decoration-4 decoration-blue-100 underline-offset-4">Arevalo</span></h1>
           </div>
         </div>
 
