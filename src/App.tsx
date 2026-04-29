@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Clock, Play, Square, PauseCircle, LogOut, CheckCircle2, UserCircle, RefreshCcw, Plus, Calendar, FileText, ClipboardList, ShieldAlert, Bell, Menu, X, Activity, WifiOff, Coffee, Monitor, LayoutGrid, MoveRight } from 'lucide-react';
+import { Clock, Play, Square, PauseCircle, LogOut, CheckCircle2, UserCircle, RefreshCcw, Plus, Calendar, FileText, ClipboardList, ShieldAlert, Bell, Menu, X, Activity, WifiOff, Coffee, Monitor, LayoutGrid, MoveRight, Mic, MicOff } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -127,6 +127,48 @@ function InstallBanner() {
         INSTALAR
       </button>
     </motion.div>
+  );
+}
+
+function VoiceInputButton({ onTranscript, placeholder = "Escuchando..." }: { onTranscript: (text: string) => void, placeholder?: string }) {
+  const [isListening, setIsListening] = useState(false);
+
+  const startListening = () => {
+    if (!('webkitSpeechRecognition' in window) && !('speechRecognition' in window)) {
+      alert("Tu navegador no soporta reconocimiento de voz.");
+      return;
+    }
+
+    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).speechRecognition;
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'es-AR';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+
+    recognition.onstart = () => setIsListening(true);
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = () => setIsListening(false);
+    
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      onTranscript(transcript);
+    };
+
+    recognition.start();
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={startListening}
+      className={cn(
+        "p-2 rounded-lg transition-all flex items-center justify-center",
+        isListening ? "bg-red-100 text-red-600 animate-pulse shadow-lg" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+      )}
+      title={isListening ? placeholder : "Dictar por voz"}
+    >
+      {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+    </button>
   );
 }
 
@@ -717,13 +759,16 @@ function Dashboard({
                    </div>
                  </div>
 
-                 <div className="mb-6">
+                  <div className="mb-6 relative">
                    <textarea
                      value={taskComment}
                      onChange={e => setTaskComment(e.target.value)}
-                     className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 outline-none resize-none h-20"
+                     className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 outline-none resize-none h-24 pr-12"
                      placeholder="Agregar comentario u observación (opcional)..."
                    />
+                   <div className="absolute right-2 top-2">
+                     <VoiceInputButton onTranscript={(text) => setTaskComment(prev => prev ? `${prev} ${text}` : text)} />
+                   </div>
                  </div>
                  
                  <motion.button 
@@ -882,19 +927,29 @@ function TaskSelector({ onStart, shiftActive }: { onStart: (t: TareaPlan) => voi
           animate={{ opacity: 1, y: 0 }} 
           className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm mb-4 flex flex-col gap-3"
         >
-          <input 
-            autoFocus
-            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-sm font-semibold outline-none focus:border-emerald-500 transition-colors"
-            placeholder="Título de la tarea*"
-            value={newTaskTitle}
-            onChange={e => setNewTaskTitle(e.target.value)}
-          />
-          <textarea 
-            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-sm font-medium outline-none focus:border-emerald-500 transition-colors resize-none h-20"
-            placeholder="Descripción (opcional)"
-            value={newTaskDesc}
-            onChange={e => setNewTaskDesc(e.target.value)}
-          />
+          <div className="relative">
+            <input 
+              autoFocus
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-sm font-semibold outline-none focus:border-emerald-500 transition-colors pr-10"
+              placeholder="Título de la tarea*"
+              value={newTaskTitle}
+              onChange={e => setNewTaskTitle(e.target.value)}
+            />
+            <div className="absolute right-2 top-1/2 -translate-y-1/2">
+               <VoiceInputButton onTranscript={(text) => setNewTaskTitle(text)} />
+            </div>
+          </div>
+          <div className="relative">
+            <textarea 
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-sm font-medium outline-none focus:border-emerald-500 transition-colors resize-none h-20 pr-10"
+              placeholder="Descripción (opcional)"
+              value={newTaskDesc}
+              onChange={e => setNewTaskDesc(e.target.value)}
+            />
+            <div className="absolute right-2 top-2">
+               <VoiceInputButton onTranscript={(text) => setNewTaskDesc(prev => prev ? `${prev} ${text}` : text)} />
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-2">
             <select 
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-sm font-semibold outline-none focus:border-emerald-500 transition-colors appearance-none"
