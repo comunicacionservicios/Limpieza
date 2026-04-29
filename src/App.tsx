@@ -130,31 +130,51 @@ function InstallBanner() {
   );
 }
 
-function VoiceInputButton({ onTranscript, placeholder = "Escuchando..." }: { onTranscript: (text: string) => void, placeholder?: string }) {
+function VoiceInputButton({ onTranscript, placeholder = "Escuchando...", className = "" }: { onTranscript: (text: string) => void, placeholder?: string, className?: string }) {
   const [isListening, setIsListening] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const startListening = () => {
-    if (!('webkitSpeechRecognition' in window) && !('speechRecognition' in window)) {
-      alert("Tu navegador no soporta reconocimiento de voz.");
+    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).speechRecognition;
+    if (!SpeechRecognition) {
+      alert("Tu navegador no soporta reconocimiento de voz. Usa Chrome o Safari.");
       return;
     }
 
-    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).speechRecognition;
     const recognition = new SpeechRecognition();
     recognition.lang = 'es-AR';
-    recognition.continuous = false;
     recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
 
-    recognition.onstart = () => setIsListening(true);
-    recognition.onend = () => setIsListening(false);
-    recognition.onerror = () => setIsListening(false);
+    recognition.onstart = () => {
+      setIsListening(true);
+      setError(null);
+    };
+    
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+    
+    recognition.onerror = (event: any) => {
+      console.error('Speech recognition error', event.error);
+      setError(event.error);
+      setIsListening(false);
+      if (event.error === 'not-allowed') {
+        alert("Permiso de micrófono denegado. Por favor, habilitalo en la configuración del sitio.");
+      }
+    };
     
     recognition.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript;
       onTranscript(transcript);
     };
 
-    recognition.start();
+    try {
+      recognition.start();
+    } catch (e) {
+      console.error(e);
+      setIsListening(false);
+    }
   };
 
   return (
@@ -162,13 +182,76 @@ function VoiceInputButton({ onTranscript, placeholder = "Escuchando..." }: { onT
       type="button"
       onClick={startListening}
       className={cn(
-        "p-2 rounded-lg transition-all flex items-center justify-center",
-        isListening ? "bg-red-100 text-red-600 animate-pulse shadow-lg" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+        "p-2 rounded-xl transition-all flex items-center justify-center",
+        isListening ? "bg-red-500 text-white animate-pulse shadow-lg scale-110" : "bg-slate-100 text-slate-500 hover:bg-slate-200",
+        className
       )}
       title={isListening ? placeholder : "Dictar por voz"}
     >
-      {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+      {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
     </button>
+  );
+}
+
+function SmartVoiceTask({ onTaskCreated, currentFilter }: { onTaskCreated: (task: TareaPlan) => void, currentFilter: string }) {
+  const [processing, setProcessing] = useState(false);
+
+  const handleSmartTranscript = async (text: string) => {
+    setProcessing(true);
+    try {
+      // Basic parsing logic
+      // e.g., "Limpiar el baño en recepción frecuenca semanal"
+      let title = text.charAt(0).toUpperCase() + text.slice(1);
+      let desc = "";
+      let freq = currentFilter;
+
+      const lowerText = text.toLowerCase();
+      if (lowerText.includes('diario') || lowerText.includes('diaria')) freq = 'Diaria';
+      else if (lowerText.includes('semanal')) freq = 'Semanal';
+      else if (lowerText.includes('mensual')) freq = 'Mensual';
+      else if (lowerText.includes('eventual')) freq = 'Eventual';
+
+      const newTask = {
+        titulo: title,
+        frecuencia: freq,
+        descripcion: "Creado por voz: " + text,
+      };
+
+      const { data, error } = await supabase
+        .from('Limpieza_Tareas_Plan')
+        .insert([newTask])
+        .select();
+
+      if (!error && data) {
+        onTaskCreated(data[0]);
+      } else {
+        console.error("Error creating smart task", error);
+        alert("No se pudo crear la tarea automáticamente: " + (error?.message || "Error desconocido"));
+      }
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  return (
+    <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 mb-4 flex items-center gap-4 shadow-sm">
+      <div className="bg-emerald-500 p-3 rounded-full shadow-emerald-200 shadow-lg">
+        <Mic className="w-6 h-6 text-white" />
+      </div>
+      <div className="flex-1">
+        <h4 className="text-sm font-bold text-emerald-800">Crear Tarea por Voz</h4>
+        <p className="text-[10px] text-emerald-600 font-medium italic">"Limpiar los vidrios de la entrada para mañana..."</p>
+      </div>
+      <VoiceInputButton 
+        onTranscript={handleSmartTranscript}
+        className="bg-emerald-500 text-white hover:bg-emerald-600 shadow-md h-12 w-12"
+      />
+      {processing && (
+        <div className="absolute inset-0 bg-white/50 backdrop-blur-[2px] rounded-2xl flex items-center justify-center z-10">
+          <RefreshCcw className="w-6 h-6 text-emerald-500 animate-spin" />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -908,6 +991,11 @@ function TaskSelector({ onStart, shiftActive }: { onStart: (t: TareaPlan) => voi
           </button>
         ))}
       </div>
+      
+      <SmartVoiceTask 
+        onTaskCreated={(newTask) => setTasks([...tasks, newTask])} 
+        currentFilter={filter}
+      />
 
       <div className="flex justify-between items-center mb-3">
         <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest pl-1">Lista de Tareas</h3>
