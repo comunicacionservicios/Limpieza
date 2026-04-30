@@ -79,16 +79,26 @@ function usePWAInstall() {
 
   useEffect(() => {
     const handler = (e: any) => {
+      console.log('beforeinstallprompt event fired');
       e.preventDefault();
       setDeferredPrompt(e);
       setShowInstallBtn(true);
     };
     window.addEventListener('beforeinstallprompt', handler);
+    
+    // Check if already installed
+    if (window.matchMedia('(display-mode: standalone)').matches) {
+      setShowInstallBtn(false);
+    }
+
     return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
 
   const handleInstall = async () => {
-    if (!deferredPrompt) return;
+    if (!deferredPrompt) {
+      alert("La aplicación ya está instalada o tu navegador no soporta la instalación automática. Si usas iPhone, pulsa el botón Compartir y luego 'Añadir a pantalla de inicio'.");
+      return;
+    }
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
     if (outcome === 'accepted') {
@@ -97,11 +107,11 @@ function usePWAInstall() {
     setDeferredPrompt(null);
   };
 
-  return { showInstallBtn, handleInstall };
+  return { showInstallBtn, handleInstall, isSupported: !!deferredPrompt };
 }
 
-function InstallBanner() {
-  const { showInstallBtn, handleInstall } = usePWAInstall();
+function InstallBanner({ installProps }: { installProps: any }) {
+  const { showInstallBtn, handleInstall } = installProps;
 
   if (!showInstallBtn) return null;
 
@@ -113,7 +123,14 @@ function InstallBanner() {
     >
       <div className="flex items-center gap-3">
         <div className="bg-white/20 p-1 rounded-xl">
-          <img src="https://storage.googleapis.com/test-media-67890/input_file_0.png" alt="Logo" className="w-6 h-6 object-contain" />
+          <img 
+            src="/regenerated_image_1777551940944.png" 
+            alt="Logo" 
+            className="w-6 h-6 object-contain"
+            onError={(e) => {
+              (e.target as HTMLImageElement).src = 'https://cdn-icons-png.flaticon.com/512/1048/1048953.png';
+            }}
+          />
         </div>
         <div>
           <p className="text-sm font-bold leading-tight">Instalar Aplicación</p>
@@ -258,6 +275,7 @@ function SmartVoiceTask({ onTaskCreated, currentFilter }: { onTaskCreated: (task
 // -- Main App --
 
 export default function App() {
+  const installProps = usePWAInstall();
   // Authentication State
   const [user, setUser] = useStickyState<Operario | null>(null, 'limpieza_user');
   const [loginDate, setLoginDate] = useStickyState<string | null>(null, 'limpieza_login_date');
@@ -342,8 +360,8 @@ export default function App() {
   if (!user) {
     return (
       <>
-        <InstallBanner />
-        <LoginScreen onLogin={(u, d) => { setUser(u); setLoginDate(d); }} />
+        <InstallBanner installProps={installProps} />
+        <LoginScreen onLogin={(u, d) => { setUser(u); setLoginDate(d); }} installProps={installProps} />
       </>
     );
   }
@@ -351,7 +369,7 @@ export default function App() {
   if (user.rol === 'supervisor') {
     return (
       <>
-        <InstallBanner />
+        <InstallBanner installProps={installProps} />
         <SupervisorDashboard user={user} onLogout={performGlobalLogout} />
       </>
     );
@@ -359,7 +377,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex items-center justify-center w-full font-sans text-slate-800">
-      <InstallBanner />
+      <InstallBanner installProps={installProps} />
       <div className="w-full max-w-[375px] bg-white min-h-screen md:min-h-[720px] md:h-[720px] md:rounded-[40px] md:shadow-2xl md:border-[8px] md:border-slate-900 overflow-hidden relative flex flex-col pb-8">
         
         {/* SIDE MENU OVERLAY */}
@@ -382,7 +400,14 @@ export default function App() {
               >
                 <div className="flex justify-between items-center mb-10">
                   <div className="flex items-center gap-2">
-                    <img src="https://storage.googleapis.com/test-media-67890/input_file_0.png" alt="Logo" className="w-12 h-12 object-contain" />
+                    <img 
+                      src="/regenerated_image_1777551940944.png" 
+                      alt="Logo" 
+                      className="w-12 h-12 object-contain"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = 'https://cdn-icons-png.flaticon.com/512/1048/1048953.png';
+                      }}
+                    />
                     <span className="font-bold text-lg tracking-tight">Limpieza Arevalo</span>
                   </div>
                   <button onClick={() => setMenuOpen(false)} className="p-2 hover:bg-slate-100 rounded-full text-slate-400">
@@ -487,8 +512,15 @@ export default function App() {
               <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold leading-none mb-1">{user.rol}</p>
               <h2 className="text-sm font-bold text-slate-800 leading-tight truncate max-w-[120px]">{user.nombre}</h2>
             </div>
-            <div className="w-10 h-10 rounded-xl overflow-hidden border border-emerald-100">
-              <img src="https://storage.googleapis.com/test-media-67890/input_file_0.png" alt="User" className="w-full h-full object-cover" />
+            <div className="w-10 h-10 rounded-xl overflow-hidden border border-emerald-100 bg-slate-50 flex items-center justify-center">
+              <img 
+                src="/regenerated_image_1777551940944.png" 
+                alt="User" 
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = 'https://cdn-icons-png.flaticon.com/512/1048/1048953.png';
+                }}
+              />
             </div>
           </div>
         </header>
@@ -1116,7 +1148,7 @@ function TaskSelector({ onStart, shiftActive }: { onStart: (t: TareaPlan) => voi
 
 // -- Login Screen --
 
-function LoginScreen({ onLogin }: { onLogin: (user: Operario, d: string) => void }) {
+function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: string) => void, installProps: any }) {
   const [nombre, setNombre] = useState('');
   const [pin, setPin] = useState('');
   const [loading, setLoading] = useState(false);
@@ -1165,11 +1197,18 @@ function LoginScreen({ onLogin }: { onLogin: (user: Operario, d: string) => void
         <div className="absolute top-0 left-0 w-full h-2 bg-blue-500"></div>
 
         <div className="mb-8 text-center flex flex-col items-center">
-          <div className="w-32 h-32 mb-4">
-            <img src="https://storage.googleapis.com/test-media-67890/input_file_0.png" alt="Logo Arevalo" className="w-full h-full object-contain" />
+          <div className="w-48 h-48 mb-4 bg-white rounded-3xl flex items-center justify-center overflow-hidden shadow-sm p-4">
+            <img 
+              src="/regenerated_image_1777551940944.png" 
+              alt="Logo Arevalo" 
+              className="w-full h-full object-contain"
+              onError={(e) => {
+                (e.target as HTMLImageElement).src = 'https://cdn-icons-png.flaticon.com/512/1048/1048953.png';
+              }}
+            />
           </div>
-          <h1 className="text-2xl font-black text-slate-800 tracking-tight">Acceso Rápido</h1>
-          <p className="text-slate-500 font-medium text-sm mt-1">Sector de Limpieza</p>
+          <h1 className="text-2xl font-black text-[#0b3464] tracking-tight">Acceso Rápido</h1>
+          <p className="text-slate-500 font-medium text-sm mt-1 uppercase tracking-widest">Sector de Limpieza</p>
         </div>
 
         <form onSubmit={handleLogin} className="flex flex-col gap-5">
@@ -1224,6 +1263,17 @@ function LoginScreen({ onLogin }: { onLogin: (user: Operario, d: string) => void
             {loading ? <RefreshCcw className="w-6 h-6 animate-spin" /> : 'INGRESAR'}
           </motion.button>
         </form>
+
+        <div className="mt-8 pt-6 border-t border-slate-100 flex flex-col gap-3">
+          <button 
+             onClick={installProps.handleInstall}
+             className="w-full flex items-center justify-center gap-3 bg-[#eaf3ff] text-[#0b3464] py-4 rounded-2xl font-black text-[11px] uppercase tracking-widest hover:bg-[#d8e9ff] transition-all active:scale-95 border-2 border-[#0b3464] shadow-sm"
+           >
+             <Monitor className="w-5 h-5 text-[#0b3464]" />
+             Instalar Aplicación en Celular
+           </button>
+           <p className="text-[10px] text-center text-slate-400 font-medium italic">Versión 2.2 - Sistema de Gestión Arevalo</p>
+        </div>
       </motion.div>
     </div>
   );
@@ -2236,7 +2286,14 @@ function SupervisorDashboard({ user, onLogout }: { user: Operario, onLogout: () 
             >
               <div className="flex justify-between items-center mb-10">
                 <div className="flex items-center gap-3">
-                  <img src="https://storage.googleapis.com/test-media-67890/input_file_0.png" alt="Logo" className="w-14 h-14 object-contain" />
+                  <img 
+                    src="/regenerated_image_1777551940944.png" 
+                    alt="Logo" 
+                    className="w-14 h-14 object-contain"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = 'https://cdn-icons-png.flaticon.com/512/1048/1048953.png';
+                    }}
+                  />
                   <span className="font-bold text-xl tracking-tight text-slate-800">Panel Arevalo</span>
                 </div>
                 <button onClick={() => setMenuOpen(false)} className="p-2 hover:bg-slate-100 rounded-full text-slate-400">
@@ -2322,7 +2379,14 @@ function SupervisorDashboard({ user, onLogout }: { user: Operario, onLogout: () 
             <Menu className="w-6 h-6" />
           </button>
           <div className="hidden sm:flex items-center gap-3 ml-2">
-            <img src="https://storage.googleapis.com/test-media-67890/input_file_0.png" alt="Logo" className="w-12 h-12 object-contain" />
+            <img 
+              src="/regenerated_image_1777551940944.png" 
+              alt="Logo" 
+              className="w-12 h-12 object-contain"
+              onError={(e) => {
+                (e.target as HTMLImageElement).src = 'https://cdn-icons-png.flaticon.com/512/1048/1048953.png';
+              }}
+            />
             <h1 className="font-black text-xl tracking-tighter text-slate-900">Limpieza<span className="text-blue-600 underline decoration-4 decoration-blue-100 underline-offset-4">Arevalo</span></h1>
           </div>
         </div>

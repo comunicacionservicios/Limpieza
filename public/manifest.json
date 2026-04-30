@@ -8,13 +8,13 @@
   "theme_color": "#3b82f6",
   "icons": [
     {
-      "src": "https://storage.googleapis.com/test-media-67890/input_file_0.png",
+      "src": "/regenerated_image_1777551940944.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "https://storage.googleapis.com/test-media-67890/input_file_0.png",
+      "src": "/regenerated_image_1777551940944.png",
       "sizes": "512x512",
       "type": "image/png"
     }
