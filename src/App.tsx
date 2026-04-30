@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Clock, Play, Square, PauseCircle, LogOut, CheckCircle2, UserCircle, RefreshCcw, Plus, Calendar, FileText, ClipboardList, ShieldAlert, Bell, Menu, X, Activity, WifiOff, Coffee, Monitor, LayoutGrid, MoveRight, Mic, MicOff, QrCode, MapPin, AlertTriangle, Package, ShieldCheck, ChevronRight, Camera, Key, Home } from 'lucide-react';
+import { Clock, Play, Square, PauseCircle, LogOut, CheckCircle2, UserCircle, RefreshCcw, Plus, Calendar, FileText, ClipboardList, ShieldAlert, Bell, Menu, X, Activity, WifiOff, Coffee, Monitor, LayoutGrid, MoveRight, QrCode, MapPin, AlertTriangle, Package, ShieldCheck, ChevronRight, Camera, Key, Home } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -96,19 +96,269 @@ interface Turno {
   estado: 'Pendiente' | 'Presente' | 'Ausente' | 'Atrasado';
   reemplazoId?: string;
   reemplazoNombre?: string;
+  tareasAsignadas?: string[]; // IDs from Limpieza_Tareas_Plan
+}
+
+const INCIDENCIAS_MOCK: Incidencia[] = [
+  { id: '1', autor: 'Juan Perez', tipo: 'Rotura', descripcion: 'Picaporte roto en baño piso 2', fecha: new Date(Date.now() - 86400000).toISOString() },
+  { id: '2', autor: 'Maria Garcia', tipo: 'Falta de Insumo', descripcion: 'No hay papel higiénico en el depósito central', fecha: new Date(Date.now() - 172800000).toISOString() },
+  { id: '3', autor: 'Carlos Lopez', tipo: 'Urgencia', descripcion: 'Inundación por cañería rota en cocina', fecha: new Date(Date.now() - 3600).toISOString() },
+];
+
+function SupervisorIncidentsLog() {
+  const [filter, setFilter] = useState<'Todas' | 'Rotura' | 'Falta de Insumo' | 'Urgencia'>('Todas');
+  const [incidencias, setIncidencias] = useState<any[]>(INCIDENCIAS_MOCK);
+  const [selectedIncident, setSelectedIncident] = useState<any>(null);
+
+  useEffect(() => {
+    const loadIncidencias = () => {
+      const db = JSON.parse(localStorage.getItem('incidencias_db') || '[]');
+      // Fix dates for mock while merging
+      const mockWithDate = INCIDENCIAS_MOCK.map(m => ({ ...m, fecha: m.fecha || new Date().toISOString() }));
+      setIncidencias([...db, ...mockWithDate]);
+    };
+    loadIncidencias();
+    const interval = setInterval(loadIncidencias, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const updateStatus = (id: string, newStatus: string) => {
+    const db = JSON.parse(localStorage.getItem('incidencias_db') || '[]');
+    const isMock = INCIDENCIAS_MOCK.some(m => m.id === id);
+    
+    if (isMock) {
+      setIncidencias(prev => prev.map(inc => inc.id === id ? { ...inc, estado: newStatus } : inc));
+    } else {
+      const updated = db.map((inc: any) => inc.id === id ? { ...inc, estado: newStatus } : inc);
+      localStorage.setItem('incidencias_db', JSON.stringify(updated));
+      setIncidencias(prev => prev.map(inc => inc.id === id ? { ...inc, estado: newStatus } : inc));
+    }
+    
+    if (selectedIncident?.id === id) {
+      setSelectedIncident((prev: any) => ({ ...prev, estado: newStatus }));
+    }
+  };
+
+  const filtered = incidencias.filter(i => filter === 'Todas' || i.tipo === filter);
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-black text-slate-800 tracking-tight">Gestión de Tickets e Incidencias</h2>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Seguimiento y Resolución</p>
+        </div>
+        <div className="flex gap-2 bg-slate-100 p-1 rounded-xl">
+          {['Todas', 'Rotura', 'Falta de Insumo', 'Urgencia'].map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f as any)}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
+                filter === f ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-800"
+              )}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
+          {filtered.map((inc) => (
+            <div 
+              key={inc.id} 
+              onClick={() => setSelectedIncident(inc)}
+              className={cn(
+                "p-5 rounded-[24px] border transition-all cursor-pointer hover:shadow-md",
+                selectedIncident?.id === inc.id ? "bg-white border-blue-200 shadow-lg" : "bg-white border-slate-100",
+                inc.urgencia === 'Alta' ? "border-l-4 border-l-rose-500" : inc.urgencia === 'Media' ? "border-l-4 border-l-amber-500" : "border-l-4 border-l-blue-500"
+              )}
+            >
+              <div className="flex justify-between items-start mb-3">
+                <span className={cn(
+                  "px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider",
+                  inc.estado === 'Abierto' || !inc.estado ? "bg-rose-50 text-rose-600" : inc.estado === 'En Proceso' ? "bg-blue-50 text-blue-600" : "bg-emerald-50 text-emerald-600"
+                )}>
+                  {inc.estado || 'Abierto'}
+                </span>
+                <span className="text-[10px] text-slate-400 font-bold">{new Date(inc.fecha).toLocaleDateString()}</span>
+              </div>
+              <h4 className="font-bold text-slate-800 mb-1">{inc.tipo}</h4>
+              <p className="text-xs text-slate-500 line-clamp-2 mb-3">{inc.descripcion}</p>
+              <div className="flex items-center gap-2 mt-auto pt-3 border-t border-slate-50">
+                <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-500 uppercase">
+                  {inc.autor?.[0]}
+                </div>
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{inc.autor}</span>
+                {inc.urgencia === 'Alta' && (
+                  <span className="ml-auto text-[9px] font-black text-rose-500 uppercase animate-pulse">¡Prioridad Alta!</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="bg-white rounded-[32px] border border-slate-100 p-8 shadow-sm h-fit sticky top-24">
+          {selectedIncident ? (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} key={selectedIncident.id}>
+              <div className="flex items-center gap-4 mb-6">
+                <div className={cn(
+                  "p-3 rounded-2xl",
+                  selectedIncident.urgencia === 'Alta' ? "bg-rose-50 text-rose-600" : "bg-blue-50 text-blue-600"
+                )}>
+                  <AlertTriangle className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-800 leading-none mb-1">{selectedIncident.tipo}</h3>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Reportado por {selectedIncident.autor}</p>
+                </div>
+              </div>
+              
+              <div className="bg-slate-50 rounded-2xl p-4 mb-6">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 underline decoration-blue-200">Detalle del Reporte</p>
+                <p className="text-sm text-slate-700 leading-relaxed">{selectedIncident.descripcion}</p>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 mb-8">
+                <button 
+                  onClick={() => updateStatus(selectedIncident.id, 'Abierto')}
+                  className={cn("py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all", (selectedIncident.estado === 'Abierto' || !selectedIncident.estado) ? "bg-rose-50 border-rose-200 text-rose-600" : "bg-white border-slate-100 text-slate-400")}
+                >
+                  Abierto
+                </button>
+                <button 
+                  onClick={() => updateStatus(selectedIncident.id, 'En Proceso')}
+                  className={cn("py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all", selectedIncident.estado === 'En Proceso' ? "bg-blue-50 border-blue-200 text-blue-600" : "bg-white border-slate-100 text-slate-400")}
+                >
+                  En Proceso
+                </button>
+                <button 
+                  onClick={() => updateStatus(selectedIncident.id, 'Resuelto')}
+                  className={cn("py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all", selectedIncident.estado === 'Resuelto' ? "bg-emerald-50 border-emerald-200 text-emerald-600" : "bg-white border-slate-100 text-slate-400")}
+                >
+                  Resuelto
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Acciones del Supervisor</p>
+                <button 
+                  onClick={() => alert(`Tarea asignada para resolver ${selectedIncident.tipo}`)}
+                  className="w-full py-3 bg-slate-900 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-slate-800 transition-all"
+                >
+                  Asignar Operario
+                </button>
+                <button 
+                  onClick={() => alert(`Notificación masiva enviada sobre: ${selectedIncident.tipo}`)}
+                  className="w-full py-3 bg-white border border-slate-200 text-slate-600 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-slate-50 transition-all"
+                >
+                  Notificar a todos
+                </button>
+              </div>
+            </motion.div>
+          ) : (
+            <div className="h-64 flex flex-col items-center justify-center text-slate-300 gap-4 opacity-50">
+              <Megaphone className="w-16 h-16" />
+              <p className="text-sm font-bold uppercase tracking-widest text-center">Selecciona un reporte<br/>para gestionar el ticket</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SupervisorAnnouncements() {
+  const [msg, setMsg] = useState('');
+  const [history, setHistory] = useState<any[]>([]);
+
+  const sendAnnouncement = () => {
+    if (!msg.trim()) return;
+    const item = { id: Date.now(), text: msg.trim(), date: new Date().toISOString() };
+    const saved = JSON.parse(localStorage.getItem('announcements_db') || '[]');
+    const updated = [item, ...saved];
+    setHistory(updated);
+    localStorage.setItem('announcements_db', JSON.stringify(updated));
+    setMsg('');
+    alert("Comunicado enviado a todo el personal.");
+  };
+
+  useEffect(() => {
+    const loadAnnouncements = () => {
+      setHistory(JSON.parse(localStorage.getItem('announcements_db') || '[]'));
+    };
+    loadAnnouncements();
+    const interval = setInterval(loadAnnouncements, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="max-w-4xl mx-auto w-full grid grid-cols-1 md:grid-cols-2 gap-8">
+      <div className="bg-white p-8 rounded-[32px] border border-blue-100 shadow-xl shadow-blue-50/50">
+        <h3 className="text-lg font-black text-slate-800 mb-6 flex items-center gap-3">
+          <Megaphone className="w-6 h-6 text-blue-500" /> Nuevo Comunicado
+        </h3>
+        <p className="text-xs text-slate-400 font-bold mb-4 uppercase tracking-widest">Este mensaje llegará a la pantalla principal de todos los operarios.</p>
+        <textarea 
+          value={msg}
+          onChange={e => setMsg(e.target.value)}
+          placeholder="Escribe el anuncio para el personal..."
+          className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-sm outline-none min-h-[150px] mb-4 focus:border-blue-400"
+        />
+        <button 
+          onClick={sendAnnouncement}
+          className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl shadow-slate-200 hover:bg-slate-800 active:scale-[0.98] transition-all"
+        >
+          ENVIAR A TODOS
+        </button>
+      </div>
+
+      <div className="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm flex flex-col">
+        <h3 className="text-sm font-black text-slate-400 mb-6 uppercase tracking-widest">Historial de Comunicación</h3>
+        <div className="space-y-4 overflow-y-auto max-h-[400px] pr-2">
+          {history.length === 0 ? (
+             <div className="h-full flex flex-col items-center justify-center opacity-30 py-10">
+               <History className="w-12 h-12 mb-2" />
+               <p className="text-xs font-bold uppercase tracking-widest">Sin historial</p>
+             </div>
+          ) : (
+            history.map(h => (
+              <div key={h.id} className="p-4 bg-slate-50 border border-slate-100 rounded-2xl relative group">
+                <p className="text-xs text-slate-700 leading-relaxed font-medium mb-2">{h.text}</p>
+                <div className="flex justify-between items-center text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                  <span>{new Date(h.date).toLocaleDateString()}</span>
+                  <span>{new Date(h.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 const TURNOS_MOCK: Turno[] = [
-  { id: 't1', operarioId: '1', operarioNombre: 'Juan Perez', ubicacion: 'Oficinas Centrales', inicioEstimado: new Date(Date.now() - 3600000).toISOString(), finEstimado: new Date(Date.now() + 7200000).toISOString(), estado: 'Presente' },
-  { id: 't2', operarioId: '2', operarioNombre: 'Maria Garcia', ubicacion: 'Deposito Sur', inicioEstimado: new Date(Date.now() - 600000).toISOString(), finEstimado: new Date(Date.now() + 14400000).toISOString(), estado: 'Pendiente' },
-  { id: 't3', operarioId: '3', operarioNombre: 'Carlos Lopez', ubicacion: 'Sucursal Norte', inicioEstimado: new Date(Date.now() - 1800000).toISOString(), finEstimado: new Date(Date.now() + 10800000).toISOString(), estado: 'Atrasado' },
+  { id: 't1', operarioId: '1', operarioNombre: 'Juan Perez', ubicacion: 'Oficinas Centrales', inicioEstimado: new Date(Date.now() - 3600000).toISOString(), finEstimado: new Date(Date.now() + 7200000).toISOString(), estado: 'Presente', tareasAsignadas: ['1', '2'] },
+  { id: 't2', operarioId: '2', operarioNombre: 'Maria Garcia', ubicacion: 'Deposito Sur', inicioEstimado: new Date(Date.now() - 600000).toISOString(), finEstimado: new Date(Date.now() + 14400000).toISOString(), estado: 'Pendiente', tareasAsignadas: [] },
+  { id: 't3', operarioId: '3', operarioNombre: 'Carlos Lopez', ubicacion: 'Sucursal Norte', inicioEstimado: new Date(Date.now() - 1800000).toISOString(), finEstimado: new Date(Date.now() + 10800000).toISOString(), estado: 'Atrasado', tareasAsignadas: [] },
 ];
 
 function SupervisorShiftManager() {
   const [turnos, setTurnos] = useState<Turno[]>(TURNOS_MOCK);
   const [loading, setLoading] = useState(false);
   const [alertas, setAlertas] = useState<string[]>([]);
+  const [catTareas, setCatTareas] = useState<any[]>([]);
 
+  useEffect(() => {
+    const fetchTareas = async () => {
+      const { data } = await supabase.from('Limpieza_Tareas_Plan').select('*');
+      if (data) setCatTareas(data);
+    };
+    fetchTareas();
+  }, []);
   useEffect(() => {
     // Simulamos verificación de alertas automáticas
     const checkAlerts = () => {
@@ -141,6 +391,26 @@ function SupervisorShiftManager() {
 
     setTurnos(prev => prev.map(t => t.id === turnoId ? { ...t, estado: 'Presente', reemplazoNombre: reemplazo } : t));
     alert(`Reemplazo asignado: ${reemplazo}`);
+  };
+
+  const asignarTarea = (turnoId: string) => {
+    const tareaId = prompt("Lista de IDs de tareas disponibles: " + catTareas.map(ct => `${ct.id}: ${ct.titulo}`).join(", "));
+    if (!tareaId) return;
+
+    const exists = catTareas.find(t => t.id === tareaId);
+    if (!exists) {
+      alert("ID de tarea no válido");
+      return;
+    }
+
+    setTurnos(prev => prev.map(t => {
+      if (t.id === turnoId) {
+        const current = t.tareasAsignadas || [];
+        if (current.includes(tareaId)) return t;
+        return { ...t, tareasAsignadas: [...current, tareaId] };
+      }
+      return t;
+    }));
   };
 
   return (
@@ -194,14 +464,34 @@ function SupervisorShiftManager() {
               <div>
                 <h5 className="font-black text-slate-800">{t.operarioNombre}</h5>
                 <p className="text-xs text-slate-500 font-bold">{t.ubicacion}</p>
-                <div className="flex items-center gap-2 mt-1">
+                <div className="flex flex-wrap items-center gap-2 mt-1">
                   <span className="text-[10px] font-black uppercase text-slate-400">{new Date(t.inicioEstimado).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {new Date(t.finEstimado).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                   {t.reemplazoNombre && <span className="text-[9px] font-black text-blue-500 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-100">REEMPLAZO: {t.reemplazoNombre}</span>}
+                  
+                  {t.tareasAsignadas && t.tareasAsignadas.length > 0 && (
+                    <div className="flex gap-1 ml-2">
+                       {t.tareasAsignadas.map(tid => {
+                         const match = catTareas.find(c => c.id === tid);
+                         return (
+                           <span key={tid} className="text-[8px] font-black bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded border border-emerald-100">
+                             {match ? match.titulo : tid}
+                           </span>
+                         );
+                       })}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => asignarTarea(t.id)}
+                className="p-2 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all"
+                title="Asignar Tarea Específica"
+              >
+                <Plus className="w-5 h-5" />
+              </button>
               <div className={cn(
                 "px-3 py-1 rounded-full text-[10px] font-black uppercase",
                 t.estado === 'Presente' ? "bg-emerald-50 text-emerald-600" : t.estado === 'Atrasado' ? "bg-rose-100 text-rose-600 animate-pulse" : "bg-slate-100 text-slate-500"
@@ -224,11 +514,31 @@ function SupervisorShiftManager() {
   );
 }
 
+interface Insumo {
+  id: string;
+  nombre: string;
+  stock: number;
+  unidad: string;
+  critico: boolean;
+  imagen?: string;
+  consumoNormal?: number;
+}
+
+interface PedidoInsumo {
+  id: string;
+  operarioNombre: string;
+  insumoNombre: string;
+  cantidad: number;
+  fecha: string;
+  estado: 'Pendiente' | 'Aprobado' | 'Rechazado';
+  alertaConsumo?: boolean;
+}
+
 const INSUMOS_MOCK: Insumo[] = [
-  { id: '1', nombre: 'Lavandina Concentrada', stock: 5, unidad: 'L', critico: true },
-  { id: '2', nombre: 'Limpiador de Pisos', stock: 2, unidad: 'L', critico: false },
-  { id: '3', nombre: 'Papel Higiénico 30m', stock: 12, unidad: 'Rollos', critico: true },
-  { id: '4', nombre: 'Bolsas de Consorcio', stock: 50, unidad: 'U', critico: false },
+  { id: '1', nombre: 'Lavandina Concentrada', stock: 5, unidad: 'L', critico: true, imagen: 'https://images.unsplash.com/photo-1584622650111-993a426fbf0a?w=100&h=100&fit=crop', consumoNormal: 2 },
+  { id: '2', nombre: 'Limpiador de Pisos', stock: 2, unidad: 'L', critico: false, imagen: 'https://images.unsplash.com/photo-1563453392212-326f55821173?w=100&h=100&fit=crop', consumoNormal: 2 },
+  { id: '3', nombre: 'Papel Higiénico 30m', stock: 12, unidad: 'Rollos', critico: true, imagen: 'https://images.unsplash.com/photo-1584622781564-1d9876a13d00?w=100&h=100&fit=crop', consumoNormal: 10 },
+  { id: '4', nombre: 'Bolsas de Consorcio', stock: 50, unidad: 'U', critico: false, imagen: 'https://images.unsplash.com/photo-1610691023059-59eb19fed992?w=100&h=100&fit=crop', consumoNormal: 20 },
 ];
 
 interface Operario {
@@ -238,16 +548,35 @@ interface Operario {
 
 // -- Components for New Modules --
 
-function InsumosModule() {
+function InsumosModule({ user }: { user: Operario }) {
   const [insumos, setInsumos] = useState(INSUMOS_MOCK);
   const [requesting, setRequesting] = useState<string|null>(null);
+  const [showStockReport, setShowStockReport] = useState(false);
+  
+  // Check if today is Friday for stock report reminder
+  const isFriday = new Date().getDay() === 5;
 
-  const handleRequest = (name: string) => {
+  const handleRequest = (name: string, quantity: number, normal: number) => {
     setRequesting(name);
+    
+    const pedido = {
+      id: Date.now().toString(),
+      operarioNombre: user.nombre,
+      insumoNombre: name,
+      cantidad: quantity,
+      fecha: new Date().toISOString(),
+      estado: 'Pendiente',
+      alertaConsumo: quantity > normal
+    };
+
+    // In a real app, this would be a supabase insert
+    const savedRequests = JSON.parse(localStorage.getItem('pending_insumos') || '[]');
+    localStorage.setItem('pending_insumos', JSON.stringify([...savedRequests, pedido]));
+
     setTimeout(() => {
       setRequesting(null);
-      alert(`Solicitud de ${name} enviada con éxito.`);
-    }, 1500);
+      alert(`Solicitud de ${quantity}x ${name} enviada para aprobación del supervisor.`);
+    }, 1000);
   };
 
   return (
@@ -255,44 +584,97 @@ function InsumosModule() {
       <div className="flex items-center justify-between mb-2">
         <div>
           <h3 className="text-lg font-black text-slate-800 tracking-tight leading-none mb-1">Insumos en Sitio</h3>
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Control de Stock y Reposición</p>
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Catálogo Visual y Pedidos</p>
         </div>
         <div className="p-3 bg-blue-50 text-blue-500 rounded-2xl">
           <Package className="w-6 h-6" />
         </div>
       </div>
 
-      <div className="space-y-3">
+      {isFriday && (
+        <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl mb-2 flex items-center justify-between">
+          <div>
+            <p className="text-xs font-black text-emerald-800 uppercase tracking-widest">¡Es Viernes!</p>
+            <p className="text-[10px] text-emerald-600 font-bold">Reporte de stock semanal obligatorio.</p>
+          </div>
+          <button 
+            onClick={() => setShowStockReport(true)}
+            className="bg-emerald-500 text-white px-3 py-1.5 rounded-xl text-[10px] font-black uppercase shadow-sm"
+          >
+            REPORTAR
+          </button>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3">
         {insumos.map(item => (
-          <div key={item.id} className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm flex items-center justify-between">
-            <div>
-              <h4 className="text-sm font-bold text-slate-800">{item.nombre}</h4>
-              <p className="text-[10px] text-slate-400 font-bold uppercase">{item.unidad}</p>
-            </div>
-            <div className="flex items-center gap-4">
-              <div className={cn(
-                "px-3 py-1 rounded-lg text-xs font-black",
-                item.stock < 5 ? "bg-rose-50 text-rose-500" : "bg-emerald-50 text-emerald-500"
-              )}>
-                {item.stock}
+          <div key={item.id} className="bg-white border border-slate-100 rounded-3xl p-3 shadow-sm flex flex-col gap-3 relative overflow-hidden group">
+            <div className="w-full h-24 bg-slate-50 rounded-2xl overflow-hidden relative">
+              <img src={item.imagen} alt={item.nombre} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+              <div className="absolute top-2 right-2 px-2 py-1 bg-white/90 backdrop-blur-sm rounded-lg text-[9px] font-black text-slate-800 border border-slate-100 shadow-sm">
+                STOCK: {item.stock}
               </div>
-              <button 
-                onClick={() => handleRequest(item.nombre)}
-                disabled={!!requesting}
-                className="p-2 text-blue-500 hover:bg-blue-50 rounded-xl transition-all"
-              >
-                <RefreshCcw className={cn("w-5 h-5", requesting === item.nombre && "animate-spin")} />
-              </button>
             </div>
+            <div className="px-1">
+              <h4 className="text-xs font-black text-slate-800 truncate leading-tight mb-1">{item.nombre}</h4>
+              <p className="text-[9px] text-slate-400 font-bold uppercase">{item.unidad}</p>
+            </div>
+            <button 
+              onClick={() => {
+                const qty = prompt(`¿Cuántos ${item.unidad} de ${item.nombre} necesitas?`, "1");
+                if (qty && !isNaN(Number(qty))) {
+                  handleRequest(item.nombre, Number(qty), item.consumoNormal || 2);
+                }
+              }}
+              disabled={!!requesting}
+              className="w-full py-2.5 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-slate-800 transition-all active:scale-95"
+            >
+              {requesting === item.nombre ? <RefreshCcw className="w-3 h-3 animate-spin" /> : "PEDIR"}
+            </button>
           </div>
         ))}
       </div>
+
+      <AnimatePresence>
+        {showStockReport && (
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-end sm:items-center justify-center p-4"
+          >
+            <motion.div 
+              initial={{ y: 100 }} 
+              animate={{ y: 0 }}
+              className="bg-white w-full max-w-md rounded-[32px] p-6 shadow-2xl"
+            >
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-black text-slate-800 tracking-tight">Reporte Stock Semanal</h3>
+                <button onClick={() => setShowStockReport(false)} className="p-2 bg-slate-100 rounded-full"><X className="w-4 h-4" /></button>
+              </div>
+              <div className="space-y-4 mb-6 max-h-[40vh] overflow-y-auto px-1">
+                {insumos.map(i => (
+                  <div key={i.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-2xl">
+                    <span className="text-xs font-bold text-slate-700">{i.nombre}</span>
+                    <input type="number" placeholder="Queda..." className="w-20 bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold outline-none text-right" />
+                  </div>
+                ))}
+              </div>
+              <button 
+                onClick={() => { alert("Reporte de stock enviado."); setShowStockReport(false); }}
+                className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl shadow-emerald-100"
+              >
+                ENVIAR REPORTE
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="mt-4 p-4 bg-amber-50 border border-amber-100 rounded-2xl">
         <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest mb-1 flex items-center gap-1">
           <ShieldAlert className="w-3 h-3" /> Aviso de Supervisor
         </p>
-        <p className="text-xs text-amber-700 italic">"Recuerden registrar el consumo de lavandina al final de cada jornada."</p>
+        <p className="text-xs text-amber-700 italic">"Los pedidos realizados antes de las 10:00 se entregan el mismo día."</p>
       </div>
     </motion.div>
   );
@@ -396,13 +778,28 @@ function RRHHModule() {
 function IncidenciasModule({ user, onReported }: { user: Operario, onReported: () => void }) {
   const [desc, setDesc] = useState('');
   const [tipo, setTipo] = useState<'Rotura' | 'Falta de Insumo' | 'Urgencia' | 'Otro'>('Rotura');
+  const [urgencia, setUrgencia] = useState<'Baja' | 'Media' | 'Alta'>('Media');
   const [isPhotoed, setIsPhotoed] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleReport = async () => {
     if (!desc) return;
     setLoading(true);
-    // Simulation
+    
+    const nuevaIncidencia = {
+      id: Date.now().toString(),
+      autor: user.nombre,
+      tipo,
+      urgencia,
+      descripcion: desc,
+      fecha: new Date().toISOString(),
+      estado: 'Abierto'
+    };
+
+    // Save to simulate persistence
+    const current = JSON.parse(localStorage.getItem('incidencias_db') || '[]');
+    localStorage.setItem('incidencias_db', JSON.stringify([nuevaIncidencia, ...current]));
+
     setTimeout(() => {
       setLoading(false);
       alert("Su reporte ha sido enviado al supervisor inmediatamente.");
@@ -411,7 +808,7 @@ function IncidenciasModule({ user, onReported }: { user: Operario, onReported: (
   };
 
   return (
-    <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-white border-2 border-rose-100 rounded-[32px] p-6 shadow-2xl shadow-rose-50">
+    <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-white border-2 border-rose-100 rounded-[32px] p-6 shadow-2xl shadow-rose-50 mb-10">
       <div className="flex items-center gap-3 mb-6">
         <div className="w-12 h-12 bg-rose-500 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-rose-200">
           <AlertTriangle className="w-6 h-6" />
@@ -423,18 +820,35 @@ function IncidenciasModule({ user, onReported }: { user: Operario, onReported: (
       </div>
 
       <div className="space-y-4">
-        <div className="space-y-1.5">
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tipo de Evento</label>
-          <select 
-            value={tipo}
-            onChange={e => setTipo(e.target.value as any)}
-            className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold outline-none"
-          >
-            <option value="Rotura">Rotura 🛠️</option>
-            <option value="Falta de Insumo">Falta de Insumo 📦</option>
-            <option value="Urgencia">Urgencia 🚨</option>
-            <option value="Otro">Otro ✨</option>
-          </select>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tipo de Evento</label>
+            <select 
+              value={tipo}
+              onChange={e => setTipo(e.target.value as any)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3 py-3 text-xs font-bold outline-none"
+            >
+              <option value="Rotura">Rotura 🛠️</option>
+              <option value="Falta de Insumo">Falta Insumo 📦</option>
+              <option value="Urgencia">Urgencia 🚨</option>
+              <option value="Otro">Otro ✨</option>
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Urgencia</label>
+            <select 
+              value={urgencia}
+              onChange={e => setUrgencia(e.target.value as any)}
+              className={cn(
+                "w-full border rounded-2xl px-3 py-3 text-xs font-bold outline-none",
+                urgencia === 'Alta' ? "bg-rose-50 border-rose-200 text-rose-600" : urgencia === 'Media' ? "bg-amber-50 border-amber-200 text-amber-600" : "bg-blue-50 border-blue-200 text-blue-600"
+              )}
+            >
+              <option value="Baja">Baja</option>
+              <option value="Media">Media</option>
+              <option value="Alta">Alta</option>
+            </select>
+          </div>
         </div>
 
         <div className="space-y-1.5">
@@ -468,6 +882,94 @@ function IncidenciasModule({ user, onReported }: { user: Operario, onReported: (
         
         <button onClick={onReported} className="w-full text-center text-slate-400 text-[10px] font-black uppercase tracking-widest py-2">
           Cancelar
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
+interface Message {
+  id: string;
+  sender: string;
+  text: string;
+  timestamp: string;
+  isSupervisor?: boolean;
+}
+
+function ChatModule({ user }: { user: Operario }) {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputText, setInputText] = useState('');
+
+  useEffect(() => {
+    const loadMessages = () => {
+      const saved = JSON.parse(localStorage.getItem('corporate_chat') || '[]');
+      setMessages(saved);
+    };
+    loadMessages();
+    const interval = setInterval(loadMessages, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const sendMessage = () => {
+    if (!inputText.trim()) return;
+    const newMessage: Message = {
+      id: Date.now().toString(),
+      sender: user.nombre,
+      text: inputText.trim(),
+      timestamp: new Date().toISOString(),
+      isSupervisor: user.rol === 'supervisor'
+    };
+    const updated = [...messages, newMessage];
+    setMessages(updated);
+    localStorage.setItem('corporate_chat', JSON.stringify(updated));
+    setInputText('');
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col h-full max-h-[500px]">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-lg font-black text-slate-800 tracking-tight leading-none mb-1">Chat Corporativo</h3>
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Comunicación Directa con Supervisión</p>
+        </div>
+      </div>
+      
+      <div className="flex-1 bg-slate-50 rounded-3xl p-4 overflow-y-auto mb-4 space-y-3 min-h-[300px]">
+        {messages.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center opacity-30">
+            <Monitor className="w-12 h-12 mb-2" />
+            <p className="text-xs font-bold uppercase tracking-widest">Inicia la conversación</p>
+          </div>
+        ) : (
+          messages.map(m => (
+            <div key={m.id} className={cn(
+              "max-w-[80%] p-3 rounded-2xl text-xs font-medium",
+              m.sender === user.nombre ? "bg-blue-600 text-white ml-auto rounded-br-none" : "bg-white border border-slate-100 text-slate-800 mr-auto rounded-bl-none"
+            )}>
+              <div className="flex justify-between items-center mb-1 gap-4">
+                <span className="font-black text-[9px] uppercase opacity-70 tracking-tighter">{m.sender}</span>
+                <span className="text-[8px] opacity-50">{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              </div>
+              <p>{m.text}</p>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="flex gap-2">
+        <input 
+          type="text" 
+          value={inputText}
+          onKeyDown={e => e.key === 'Enter' && sendMessage()}
+          onChange={e => setInputText(e.target.value)}
+          placeholder="Escribe un mensaje..."
+          className="flex-1 bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm focus:border-blue-500 outline-none"
+        />
+        <button 
+          onClick={sendMessage}
+          className="bg-slate-900 text-white p-3 rounded-2xl shadow-lg active:scale-95 transition-transform"
+        >
+          <MoveRight className="w-6 h-6" />
         </button>
       </div>
     </motion.div>
@@ -569,12 +1071,9 @@ function TareaActiva({
         <textarea
           value={comment}
           onChange={e => onCommentChange(e.target.value)}
-          className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-5 py-4 text-sm focus:border-blue-400 outline-none resize-none h-28 pr-12 font-medium"
+          className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-5 py-4 text-sm focus:border-blue-400 outline-none resize-none h-28 font-medium"
           placeholder="Notas adicionales..."
         />
-        <div className="absolute right-3 top-4">
-          <VoiceInputButton onTranscript={(text) => onCommentChange(comment ? `${comment} ${text}` : text)} />
-        </div>
       </div>
       
       <motion.button 
@@ -669,130 +1168,6 @@ function InstallBanner({ installProps }: { installProps: any }) {
   );
 }
 
-function VoiceInputButton({ onTranscript, placeholder = "Escuchando...", className = "" }: { onTranscript: (text: string) => void, placeholder?: string, className?: string }) {
-  const [isListening, setIsListening] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const startListening = () => {
-    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).speechRecognition;
-    if (!SpeechRecognition) {
-      alert("Tu navegador no soporta reconocimiento de voz. Usa Chrome o Safari.");
-      return;
-    }
-
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'es-AR';
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-
-    recognition.onstart = () => {
-      setIsListening(true);
-      setError(null);
-    };
-    
-    recognition.onend = () => {
-      setIsListening(false);
-    };
-    
-    recognition.onerror = (event: any) => {
-      console.error('Speech recognition error', event.error);
-      setError(event.error);
-      setIsListening(false);
-      if (event.error === 'not-allowed') {
-        alert("Permiso de micrófono denegado. Por favor, habilitalo en la configuración del sitio.");
-      }
-    };
-    
-    recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript;
-      onTranscript(transcript);
-    };
-
-    try {
-      recognition.start();
-    } catch (e) {
-      console.error(e);
-      setIsListening(false);
-    }
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={startListening}
-      className={cn(
-        "p-2 rounded-xl transition-all flex items-center justify-center",
-        isListening ? "bg-red-500 text-white animate-pulse shadow-lg scale-110" : "bg-slate-100 text-slate-500 hover:bg-slate-200",
-        className
-      )}
-      title={isListening ? placeholder : "Dictar por voz"}
-    >
-      {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-    </button>
-  );
-}
-
-function SmartVoiceTask({ onTaskCreated, currentFilter }: { onTaskCreated: (task: TareaPlan) => void, currentFilter: string }) {
-  const [processing, setProcessing] = useState(false);
-
-  const handleSmartTranscript = async (text: string) => {
-    setProcessing(true);
-    try {
-      // Basic parsing logic
-      // e.g., "Limpiar el baño en recepción frecuenca semanal"
-      let title = text.charAt(0).toUpperCase() + text.slice(1);
-      let desc = "";
-      let freq = currentFilter;
-
-      const lowerText = text.toLowerCase();
-      if (lowerText.includes('diario') || lowerText.includes('diaria')) freq = 'Diaria';
-      else if (lowerText.includes('semanal')) freq = 'Semanal';
-      else if (lowerText.includes('mensual')) freq = 'Mensual';
-      else if (lowerText.includes('eventual')) freq = 'Eventual';
-
-      const newTask = {
-        titulo: title,
-        frecuencia: freq,
-        descripcion: "Creado por voz: " + text,
-      };
-
-      const { data, error } = await supabase
-        .from('Limpieza_Tareas_Plan')
-        .insert([newTask])
-        .select();
-
-      if (!error && data) {
-        onTaskCreated(data[0]);
-      } else {
-        console.error("Error creating smart task", error);
-        alert("No se pudo crear la tarea automáticamente: " + (error?.message || "Error desconocido"));
-      }
-    } finally {
-      setProcessing(false);
-    }
-  };
-
-  return (
-    <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 mb-4 flex items-center gap-4 shadow-sm">
-      <div className="bg-emerald-500 p-3 rounded-full shadow-emerald-200 shadow-lg">
-        <Mic className="w-6 h-6 text-white" />
-      </div>
-      <div className="flex-1">
-        <h4 className="text-sm font-bold text-emerald-800">Crear Tarea por Voz</h4>
-        <p className="text-[10px] text-emerald-600 font-medium italic">"Limpiar los vidrios de la entrada para mañana..."</p>
-      </div>
-      <VoiceInputButton 
-        onTranscript={handleSmartTranscript}
-        className="bg-emerald-500 text-white hover:bg-emerald-600 shadow-md h-12 w-12"
-      />
-      {processing && (
-        <div className="absolute inset-0 bg-white/50 backdrop-blur-[2px] rounded-2xl flex items-center justify-center z-10">
-          <RefreshCcw className="w-6 h-6 text-emerald-500 animate-spin" />
-        </div>
-      )}
-    </div>
-  );
-}
 
 // -- Main App --
 
@@ -1357,6 +1732,9 @@ function Dashboard({
 
       <div className="px-6 flex-1 flex flex-col gap-6">
         
+        {/* NEW: ANUNCIOS DEL SUPERVISOR */}
+        <AnunciosBanner />
+        
         {/* SHIFT CONTROLS */}
         <section className="flex flex-col gap-3">
           
@@ -1455,12 +1833,9 @@ function Dashboard({
                    <textarea
                      value={taskComment}
                      onChange={e => setTaskComment(e.target.value)}
-                     className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 outline-none resize-none h-24 pr-12"
+                     className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 outline-none resize-none h-24"
                      placeholder="Agregar comentario u observación (opcional)..."
                    />
-                   <div className="absolute right-2 top-2">
-                     <VoiceInputButton onTranscript={(text) => setTaskComment(prev => prev ? `${prev} ${text}` : text)} />
-                   </div>
                  </div>
                  
                  <motion.button 
@@ -1499,7 +1874,12 @@ function Dashboard({
         {activeTab === 'insumos' && <InsumosModule />}
         {activeTab === 'capacitacion' && <CapacitacionModule />}
         {activeTab === 'rrhh' && <RRHHModule />}
-        {activeTab === 'incidencias' && <IncidenciasModule user={user} onReported={() => setActiveTab('tareas')} />}
+            {activeTab === 'incidencias' && (
+              <div className="flex flex-col gap-6">
+                <IncidenciasModule user={user} onReported={() => setActiveTab('tareas')} />
+                <ChatModule user={user} />
+              </div>
+            )}
 
         {activeTab !== 'tareas' && activeTab !== 'incidencias' && (
            <h3 onClick={() => setActiveTab('incidencias')} className="text-center font-black text-rose-500 text-[10px] uppercase tracking-widest mt-10 py-6 border-2 border-dashed border-rose-100 rounded-3xl cursor-pointer flex items-center justify-center gap-2">
@@ -1512,7 +1892,55 @@ function Dashboard({
   );
 }
 
-// -- Shift Button UI --
+function AnunciosBanner() {
+  const [announcements, setAnnouncements] = useState<any[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+
+  useEffect(() => {
+    const load = () => {
+      const saved = JSON.parse(localStorage.getItem('announcements_db') || '[]');
+      setAnnouncements(saved);
+    };
+    load();
+    const interval = setInterval(load, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (announcements.length === 0) return null;
+
+  const current = announcements[currentIndex];
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: -20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="bg-slate-900 text-white p-4 rounded-3xl relative overflow-hidden shadow-xl"
+    >
+      <div className="absolute top-0 right-0 p-2 opacity-10">
+        <Megaphone className="w-16 h-16 -rotate-12" />
+      </div>
+      <div className="relative z-10">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-400">Comunicado Oficial</span>
+          <span className="text-[8px] font-bold text-slate-500">{new Date(current.date).toLocaleDateString()}</span>
+        </div>
+        <p className="text-xs font-bold leading-relaxed">{current.text}</p>
+        
+        {announcements.length > 1 && (
+          <div className="flex gap-1 mt-3">
+             {announcements.map((_, i) => (
+               <button 
+                key={i} 
+                onClick={() => setCurrentIndex(i)}
+                className={cn("h-1 rounded-full transition-all", i === currentIndex ? "w-4 bg-blue-500" : "w-1 bg-slate-700")} 
+               />
+             ))}
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
 function ShiftButton({ color, label, icon, onClick, small, disabled }: { color: 'green'|'yellow'|'red', label: string, icon: React.ReactNode, onClick: ()=>void, small?: boolean, disabled?: boolean }) {
   const baseClasses = disabled ? "opacity-50 grayscale cursor-not-allowed" : "shadow-lg active:shadow-sm";
   
@@ -1703,10 +2131,6 @@ function TaskSelector({ onStart, shiftActive }: { onStart: (t: TareaPlan) => voi
         )}
       </div>
       
-      <SmartVoiceTask 
-        onTaskCreated={(newTask) => setTasks([newTask, ...tasks])} 
-        currentFilter={filter}
-      />
 
       <div className="flex justify-between items-center mb-3">
         <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest pl-1">Lista de Tareas</h3>
@@ -1729,25 +2153,19 @@ function TaskSelector({ onStart, shiftActive }: { onStart: (t: TareaPlan) => voi
           <div className="relative">
             <input 
               autoFocus
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-sm font-semibold outline-none focus:border-emerald-500 transition-colors pr-10"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-sm font-semibold outline-none focus:border-emerald-500 transition-colors"
               placeholder="Título de la tarea*"
               value={newTaskTitle}
               onChange={e => setNewTaskTitle(e.target.value)}
             />
-            <div className="absolute right-2 top-1/2 -translate-y-1/2">
-               <VoiceInputButton onTranscript={(text) => setNewTaskTitle(text)} />
-            </div>
           </div>
           <div className="relative">
             <textarea 
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-sm font-medium outline-none focus:border-emerald-500 transition-colors resize-none h-20 pr-10"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-sm font-medium outline-none focus:border-emerald-500 transition-colors resize-none h-20"
               placeholder="Descripción (opcional)"
               value={newTaskDesc}
               onChange={e => setNewTaskDesc(e.target.value)}
             />
-            <div className="absolute right-2 top-2">
-               <VoiceInputButton onTranscript={(text) => setNewTaskDesc(prev => prev ? `${prev} ${text}` : text)} />
-            </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <select 
@@ -2047,8 +2465,20 @@ function SupervisorStockManager() {
     { id: '4', nombre: 'Detergente (Litros)', cantidad: 15 },
   ]);
 
+  const [pedidos, setPedidos] = useState<PedidoInsumo[]>([]);
   const [nuevoInsumo, setNuevoInsumo] = useState('');
   const [nuevaCant, setNuevaCant] = useState('');
+
+  useEffect(() => {
+    // Load pending requests from local storage
+    const loadRequests = () => {
+      const saved = JSON.parse(localStorage.getItem('pending_insumos') || '[]');
+      setPedidos(saved);
+    };
+    loadRequests();
+    const interval = setInterval(loadRequests, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   const agregarInsumo = () => {
     if (nuevoInsumo.trim() && !isNaN(Number(nuevaCant))) {
@@ -2062,51 +2492,98 @@ function SupervisorStockManager() {
     setInsumos(prev => prev.map(i => i.id === id ? { ...i, cantidad: Math.max(0, i.cantidad + diff) } : i));
   };
 
+  const responderPedido = (pedidoId: string, status: 'Aprobado' | 'Rechazado') => {
+    const updated = pedidos.map(p => p.id === pedidoId ? { ...p, estado: status } : p);
+    setPedidos(updated);
+    localStorage.setItem('pending_insumos', JSON.stringify(updated));
+  };
+
   return (
-    <div className="bg-white rounded-[24px] shadow-sm border border-slate-200 overflow-hidden flex-1 flex flex-col p-6 w-full max-w-4xl mx-auto">
-      <h3 className="font-bold text-lg text-slate-800 mb-6">Control de Stock e Insumos</h3>
-      
-      <div className="flex gap-2 mb-6">
-        <input 
-          placeholder="Nuevo Insumo (Ej: Guantes Par)" 
-          className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none"
-          value={nuevoInsumo} onChange={e => setNuevoInsumo(e.target.value)}
-        />
-        <input 
-          type="number" 
-          placeholder="Cant" 
-          className="w-20 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none"
-          value={nuevaCant} onChange={e => setNuevaCant(e.target.value)}
-        />
-        <button onClick={agregarInsumo} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-bold"><Plus className="w-5 h-5"/></button>
+    <div className="bg-white rounded-[24px] shadow-sm border border-slate-200 overflow-hidden flex-1 flex flex-col p-6 w-full max-w-4xl mx-auto gap-8">
+      <div>
+        <h3 className="font-bold text-lg text-slate-800 mb-6 flex items-center gap-2">
+          <ClipboardList className="w-5 h-5 text-blue-500" /> Aprobación de Pedidos
+        </h3>
+        {pedidos.filter(p => p.estado === 'Pendiente').length === 0 ? (
+          <p className="text-sm text-slate-400 italic bg-slate-50 p-4 rounded-2xl border border-dashed border-slate-200">No hay pedidos pendientes de aprobación.</p>
+        ) : (
+          <div className="space-y-3">
+            {pedidos.filter(p => p.estado === 'Pendiente').map(p => (
+              <div key={p.id} className={cn(
+                "p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4",
+                p.alertaConsumo ? "bg-rose-50 border-rose-200" : "bg-blue-50 border-blue-100"
+              )}>
+                <div className="flex gap-4">
+                  <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center shrink-0", p.alertaConsumo ? "bg-rose-500 text-white" : "bg-blue-500 text-white")}>
+                    {p.alertaConsumo ? <ShieldAlert className="w-5 h-5 animate-pulse" /> : <Package className="w-5 h-5" />}
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-slate-800">{p.insumoNombre} <span className="text-blue-600">x{p.cantidad}</span></h4>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{p.operarioNombre} • {new Date(p.fecha).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                    {p.alertaConsumo && (
+                      <p className="text-[9px] font-black text-rose-600 uppercase mt-1 flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3" /> Alerta: Consumo superior al normal
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                   <button onClick={() => responderPedido(p.id, 'Rechazado')} className="bg-white border border-slate-200 text-slate-500 px-3 py-1.5 rounded-xl text-xs font-bold hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-all">Rechazar</button>
+                   <button onClick={() => responderPedido(p.id, 'Aprobado')} className="bg-slate-900 text-white px-3 py-1.5 rounded-xl text-xs font-bold hover:bg-slate-800 transition-all">Aprobar</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className="overflow-x-auto w-full">
-        <table className="w-full text-left text-sm whitespace-nowrap">
-          <thead className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
-            <tr>
-              <th className="px-6 py-4 rounded-tl-xl rounded-bl-xl">Insumo</th>
-              <th className="px-6 py-4">Cantidad Disponible</th>
-              <th className="px-6 py-4 rounded-tr-xl rounded-br-xl text-right">Ajustar</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {insumos.map(insumo => (
-              <tr key={insumo.id} className="hover:bg-slate-50 transition-colors">
-                <td className="px-6 py-4 font-semibold text-slate-800">{insumo.nombre}</td>
-                <td className="px-6 py-4">
-                  <span className={cn("px-3 py-1 rounded-full font-bold text-xs", insumo.cantidad < 5 ? "bg-rose-100 text-rose-600" : "bg-emerald-100 text-emerald-600")}>
-                    {insumo.cantidad}
-                  </span>
-                </td>
-                <td className="px-6 py-4 text-right flex justify-end gap-2">
-                  <button onClick={() => updateCant(insumo.id, -1)} className="bg-slate-100 hover:bg-slate-200 text-slate-600 w-8 h-8 rounded-lg flex items-center justify-center font-bold">-</button>
-                  <button onClick={() => updateCant(insumo.id, 1)} className="bg-slate-100 hover:bg-slate-200 text-slate-600 w-8 h-8 rounded-lg flex items-center justify-center font-bold">+</button>
-                </td>
+      <div>
+        <h3 className="font-bold text-lg text-slate-800 mb-6 flex items-center gap-2">
+           <Package className="w-5 h-5 text-blue-500" /> Inventario Central
+        </h3>
+        
+        <div className="flex gap-2 mb-6">
+          <input 
+            placeholder="Nuevo Insumo (Ej: Guantes Par)" 
+            className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none"
+            value={nuevoInsumo} onChange={e => setNuevoInsumo(e.target.value)}
+          />
+          <input 
+            type="number" 
+            placeholder="Cant" 
+            className="w-20 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none"
+            value={nuevaCant} onChange={e => setNuevaCant(e.target.value)}
+          />
+          <button onClick={agregarInsumo} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-bold"><Plus className="w-5 h-5"/></button>
+        </div>
+
+        <div className="overflow-x-auto w-full">
+          <table className="w-full text-left text-sm whitespace-nowrap">
+            <thead className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
+              <tr>
+                <th className="px-6 py-4 rounded-tl-xl rounded-bl-xl">Insumo</th>
+                <th className="px-6 py-4">Cantidad Disponible</th>
+                <th className="px-6 py-4 rounded-tr-xl rounded-br-xl text-right">Ajustar</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {insumos.map(insumo => (
+                <tr key={insumo.id} className="hover:bg-slate-50 transition-colors">
+                  <td className="px-6 py-4 font-semibold text-slate-800">{insumo.nombre}</td>
+                  <td className="px-6 py-4">
+                    <span className={cn("px-3 py-1 rounded-full font-bold text-xs", insumo.cantidad < 5 ? "bg-rose-100 text-rose-600" : "bg-emerald-100 text-emerald-600")}>
+                      {insumo.cantidad}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-right flex justify-end gap-2">
+                    <button onClick={() => updateCant(insumo.id, -1)} className="bg-slate-100 hover:bg-slate-200 text-slate-600 w-8 h-8 rounded-lg flex items-center justify-center font-bold">-</button>
+                    <button onClick={() => updateCant(insumo.id, 1)} className="bg-slate-100 hover:bg-slate-200 text-slate-600 w-8 h-8 rounded-lg flex items-center justify-center font-bold">+</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -2912,7 +3389,7 @@ function OperarioStatusGrid({ operarios, registros }: { operarios: any[], regist
 }
 
 function SupervisorDashboard({ user, onLogout }: { user: Operario, onLogout: () => void }) {
-  const [tab, setTab] = useState<'dashboard' | 'tareas' | 'reportes' | 'stock' | 'turnos'>('dashboard');
+  const [tab, setTab] = useState<'dashboard' | 'tareas' | 'reportes' | 'stock' | 'turnos' | 'incidencias' | 'anuncios' | 'chat'>('dashboard');
   const [registros, setRegistros] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -3091,6 +3568,36 @@ function SupervisorDashboard({ user, onLogout }: { user: Operario, onLogout: () 
                 >
                   <ShieldAlert className="w-6 h-6" />
                   <span>Panel General</span>
+                </button>
+                <button 
+                  onClick={() => { setTab('incidencias'); setMenuOpen(false); }}
+                  className={cn(
+                    "flex items-center gap-4 px-5 py-4 rounded-2xl font-bold transition-all",
+                    tab === 'incidencias' ? "bg-rose-50 text-rose-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"
+                  )}
+                >
+                  <AlertTriangle className="w-6 h-6" />
+                  <span>Incidencias / Tickets</span>
+                </button>
+                <button 
+                  onClick={() => { setTab('chat'); setMenuOpen(false); }}
+                  className={cn(
+                    "flex items-center gap-4 px-5 py-4 rounded-2xl font-bold transition-all",
+                    tab === 'chat' ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"
+                  )}
+                >
+                  <Monitor className="w-6 h-6" />
+                  <span>Chat Operativo</span>
+                </button>
+                <button 
+                  onClick={() => { setTab('anuncios'); setMenuOpen(false); }}
+                  className={cn(
+                    "flex items-center gap-4 px-5 py-4 rounded-2xl font-bold transition-all",
+                    tab === 'anuncios' ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"
+                  )}
+                >
+                  <Megaphone className="w-6 h-6" />
+                  <span>Comunicados</span>
                 </button>
                 <button 
                   onClick={() => { setTab('reportes'); setMenuOpen(false); }}
@@ -3309,6 +3816,14 @@ function SupervisorDashboard({ user, onLogout }: { user: Operario, onLogout: () 
                </div>
             </div>
 
+          </div>
+        )}
+
+        {tab === 'incidencias' && <SupervisorIncidentsLog />}
+        {tab === 'anuncios' && <SupervisorAnnouncements />}
+        {tab === 'chat' && (
+          <div className="max-w-2xl mx-auto w-full bg-white p-8 rounded-[32px] border border-slate-200 shadow-sm h-full max-h-[700px]">
+            <ChatModule user={user} />
           </div>
         )}
 
