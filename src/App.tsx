@@ -1,7 +1,31 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Clock, Play, Square, PauseCircle, LogOut, CheckCircle2, UserCircle, RefreshCcw, Plus, Calendar, FileText, ClipboardList, ShieldAlert, Bell, Menu, X, Activity, WifiOff, Coffee, Monitor, LayoutGrid, MoveRight, QrCode, MapPin, AlertTriangle, Package, ShieldCheck, ChevronRight, Camera, Key, Home } from 'lucide-react';
-import { supabase } from './supabaseClient';
+import { Clock, Play, Square, PauseCircle, LogOut, CheckCircle2, UserCircle, Users, RefreshCcw, Plus, Calendar, FileText, ClipboardList, ShieldAlert, Bell, Menu, X, Activity, WifiOff, Coffee, Monitor, LayoutGrid, MoveRight, MapPin, AlertTriangle, Package, ShieldCheck, ChevronRight, Camera, Key, Home, BarChart2, Megaphone, History } from 'lucide-react';
+import { db, auth, OperationType, handleFirestoreError } from './lib/firebase';
+import { 
+  collection, 
+  onSnapshot, 
+  query, 
+  orderBy, 
+  limit, 
+  addDoc, 
+  setDoc, 
+  doc, 
+  getDocs, 
+  getDoc,
+  updateDoc,
+  where,
+  Timestamp,
+  serverTimestamp
+} from 'firebase/firestore';
+import { 
+  onAuthStateChanged, 
+  signInWithPopup, 
+  signInAnonymously,
+  GoogleAuthProvider, 
+  signOut,
+  User as FirebaseUser
+} from 'firebase/auth';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -67,6 +91,7 @@ interface TareaPlan {
   descripcion?: string;
   fecha_vencimiento?: string;
   requiere_foto?: boolean;
+  tipoLimpieza?: 'Mantenimiento' | 'Intermedia' | 'Detalles';
 }
 
 interface Insumo {
@@ -107,35 +132,30 @@ const INCIDENCIAS_MOCK: Incidencia[] = [
 
 function SupervisorIncidentsLog() {
   const [filter, setFilter] = useState<'Todas' | 'Rotura' | 'Falta de Insumo' | 'Urgencia'>('Todas');
-  const [incidencias, setIncidencias] = useState<any[]>(INCIDENCIAS_MOCK);
+  const [incidencias, setIncidencias] = useState<any[]>([]);
   const [selectedIncident, setSelectedIncident] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const loadIncidencias = () => {
-      const db = JSON.parse(localStorage.getItem('incidencias_db') || '[]');
-      // Fix dates for mock while merging
-      const mockWithDate = INCIDENCIAS_MOCK.map(m => ({ ...m, fecha: m.fecha || new Date().toISOString() }));
-      setIncidencias([...db, ...mockWithDate]);
-    };
-    loadIncidencias();
-    const interval = setInterval(loadIncidencias, 5000);
-    return () => clearInterval(interval);
+    const q = query(collection(db, 'incidents'), orderBy('fecha', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setIncidencias(data);
+      setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'incidents');
+    });
+    return () => unsubscribe();
   }, []);
 
-  const updateStatus = (id: string, newStatus: string) => {
-    const db = JSON.parse(localStorage.getItem('incidencias_db') || '[]');
-    const isMock = INCIDENCIAS_MOCK.some(m => m.id === id);
-    
-    if (isMock) {
-      setIncidencias(prev => prev.map(inc => inc.id === id ? { ...inc, estado: newStatus } : inc));
-    } else {
-      const updated = db.map((inc: any) => inc.id === id ? { ...inc, estado: newStatus } : inc);
-      localStorage.setItem('incidencias_db', JSON.stringify(updated));
-      setIncidencias(prev => prev.map(inc => inc.id === id ? { ...inc, estado: newStatus } : inc));
-    }
-    
-    if (selectedIncident?.id === id) {
-      setSelectedIncident((prev: any) => ({ ...prev, estado: newStatus }));
+  const updateStatus = async (id: string, newStatus: string) => {
+    try {
+      await updateDoc(doc(db, 'incidents', id), { estado: newStatus });
+      if (selectedIncident?.id === id) {
+        setSelectedIncident((prev: any) => ({ ...prev, estado: newStatus }));
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `incidents/${id}`);
     }
   };
 
@@ -270,28 +290,131 @@ function SupervisorIncidentsLog() {
   );
 }
 
+function SupervisorProductivityStats({ registros, operarios, tasks }: { registros: any[], operarios: any[], tasks: any[] }) {
+  const stats = React.useMemo(() => {
+    const operarioStats: Record<string, { completed: number, totalTime: number }> = {};
+    
+    // Initialize
+    operarios.forEach(op => {
+      operarioStats[op.nombre] = { completed: 0, totalTime: 0 };
+    });
+
+    const completedTasks = registros.filter(r => r.accion?.includes('Tarea:') && r.fin);
+    
+    completedTasks.forEach(r => {
+      if (operarioStats[r.operario]) {
+        operarioStats[r.operario].completed += 1;
+        operarioStats[r.operario].totalTime += (r.duracion_minutos || 0);
+      }
+    });
+
+    const chartData = Object.entries(operarioStats).map(([name, data]) => ({
+      name,
+      tasks: data.completed,
+      avgTime: data.completed > 0 ? Math.round(data.totalTime / data.completed) : 0
+    })).filter(d => d.tasks > 0 || operarios.length < 10);
+
+    const totalCompleted = completedTasks.length;
+    const planCount = tasks.length || 1;
+    const compliance = Math.min(100, Math.round((totalCompleted / planCount) * 100));
+
+    return { chartData, totalCompleted, compliance };
+  }, [registros, operarios, tasks]);
+
+  const COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899'];
+
+  return (
+    <div className="flex flex-col gap-8">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <KPICard 
+          title="Tareas Completadas" 
+          value={stats.totalCompleted} 
+          icon={<CheckCircle2 className="w-6 h-6 text-emerald-500" />} 
+          trend="+12%"
+          sub="Total en el periodo seleccionado"
+        />
+        <KPICard 
+          title="Tasa de Cumplimiento" 
+          value={`${stats.compliance}%`} 
+          icon={<Activity className="w-6 h-6 text-blue-500" />} 
+          trend={stats.compliance > 80 ? "Óptimo" : "Atención"}
+          sub={`vs ${tasks.length} tareas planificadas`}
+        />
+        <KPICard 
+          title="Productividad Media" 
+          value={stats.chartData.length > 0 ? `${Math.round(stats.chartData.reduce((acc, curr) => acc + curr.avgTime, 0) / stats.chartData.length)}m` : '0m'} 
+          icon={<Clock className="w-6 h-6 text-amber-500" />} 
+          sub="Tiempo promedio por tarea"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm">
+          <h3 className="text-sm font-black text-slate-400 mb-6 uppercase tracking-widest px-2">Tareas por Operario</h3>
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={stats.chartData}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#64748b' }} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#64748b' }} />
+                <Tooltip 
+                  cursor={{ fill: '#f8fafc' }}
+                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '12px' }}
+                />
+                <Bar dataKey="tasks" name="Tareas" fill="#3b82f6" radius={[6, 6, 0, 0]} barSize={40} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm">
+          <h3 className="text-sm font-black text-slate-400 mb-6 uppercase tracking-widest px-2">Tiempo Promedio (Minutos)</h3>
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={stats.chartData}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#64748b' }} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#64748b' }} />
+                <Tooltip 
+                  cursor={{ fill: '#f8fafc' }}
+                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '12px' }}
+                />
+                <Bar dataKey="avgTime" name="Minutos" fill="#f59e0b" radius={[6, 6, 0, 0]} barSize={40} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SupervisorAnnouncements() {
   const [msg, setMsg] = useState('');
   const [history, setHistory] = useState<any[]>([]);
 
-  const sendAnnouncement = () => {
+  const sendAnnouncement = async () => {
     if (!msg.trim()) return;
-    const item = { id: Date.now(), text: msg.trim(), date: new Date().toISOString() };
-    const saved = JSON.parse(localStorage.getItem('announcements_db') || '[]');
-    const updated = [item, ...saved];
-    setHistory(updated);
-    localStorage.setItem('announcements_db', JSON.stringify(updated));
-    setMsg('');
-    alert("Comunicado enviado a todo el personal.");
+    const item = { text: msg.trim(), date: new Date().toISOString(), createdAt: serverTimestamp() };
+    
+    try {
+      await addDoc(collection(db, 'announcements'), item);
+      setMsg('');
+      alert("Comunicado enviado a todo el personal.");
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'announcements');
+    }
   };
 
   useEffect(() => {
-    const loadAnnouncements = () => {
-      setHistory(JSON.parse(localStorage.getItem('announcements_db') || '[]'));
-    };
-    loadAnnouncements();
-    const interval = setInterval(loadAnnouncements, 5000);
-    return () => clearInterval(interval);
+    const q = query(collection(db, 'announcements'), orderBy('createdAt', 'desc'), limit(50));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setHistory(data);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'announcements');
+    });
+    return () => unsubscribe();
   }, []);
 
   return (
@@ -354,8 +477,13 @@ function SupervisorShiftManager() {
 
   useEffect(() => {
     const fetchTareas = async () => {
-      const { data } = await supabase.from('Limpieza_Tareas_Plan').select('*');
-      if (data) setCatTareas(data);
+      try {
+        const querySnapshot = await getDocs(collection(db, 'tasks'));
+        const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setCatTareas(data);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.LIST, 'tasks');
+      }
     };
     fetchTareas();
   }, []);
@@ -542,8 +670,14 @@ const INSUMOS_MOCK: Insumo[] = [
 ];
 
 interface Operario {
+  id?: string;
   nombre: string;
+  usuario?: string;
+  pin?: string;
   rol: 'operario' | 'supervisor';
+  email?: string;
+  whatsapp?: string;
+  activo?: boolean;
 }
 
 // -- Components for New Modules --
@@ -781,34 +915,46 @@ function IncidenciasModule({ user, onReported }: { user: Operario, onReported: (
   const [urgencia, setUrgencia] = useState<'Baja' | 'Media' | 'Alta'>('Media');
   const [isPhotoed, setIsPhotoed] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [showShareModal, setShowShareModal] = useState<{ id: string, content: string } | null>(null);
 
   const handleReport = async () => {
     if (!desc) return;
     setLoading(true);
     
     const nuevaIncidencia = {
-      id: Date.now().toString(),
+      operarioId: user.id || 'unknown',
       autor: user.nombre,
       tipo,
       urgencia,
       descripcion: desc,
       fecha: new Date().toISOString(),
-      estado: 'Abierto'
+      estado: 'Abierto',
+      createdAt: serverTimestamp()
     };
 
-    // Save to simulate persistence
-    const current = JSON.parse(localStorage.getItem('incidencias_db') || '[]');
-    localStorage.setItem('incidencias_db', JSON.stringify([nuevaIncidencia, ...current]));
-
-    setTimeout(() => {
+    try {
+      const docRef = await addDoc(collection(db, 'incidents'), nuevaIncidencia);
       setLoading(false);
-      alert("Su reporte ha sido enviado al supervisor inmediatamente.");
-      onReported();
-    }, 1500);
+      
+      const shareContent = `*Reporte de Incidencia*\n📌 *Tipo:* ${tipo}\n🚨 *Urgencia:* ${urgencia}\n👤 *Autor:* ${user.nombre}\n📝 *Descripción:* ${desc}`;
+      setShowShareModal({ id: docRef.id, content: shareContent });
+    } catch (error) {
+      console.error("Error reporting incident:", error);
+      handleFirestoreError(error, OperationType.CREATE, 'incidents');
+      setLoading(false);
+    }
+  };
+
+  const shareViaWhatsApp = () => {
+    if (!showShareModal) return;
+    const url = `https://wa.me/?text=${encodeURIComponent(showShareModal.content)}`;
+    window.open(url, '_blank');
+    setShowShareModal(null);
+    onReported();
   };
 
   return (
-    <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-white border-2 border-rose-100 rounded-[32px] p-6 shadow-2xl shadow-rose-50 mb-10">
+    <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-white border-2 border-rose-100 rounded-[32px] p-6 shadow-2xl shadow-rose-50 mb-10 overflow-hidden">
       <div className="flex items-center gap-3 mb-6">
         <div className="w-12 h-12 bg-rose-500 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-rose-200">
           <AlertTriangle className="w-6 h-6" />
@@ -884,6 +1030,42 @@ function IncidenciasModule({ user, onReported }: { user: Operario, onReported: (
           Cancelar
         </button>
       </div>
+
+      <AnimatePresence>
+        {showShareModal && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }} 
+              animate={{ scale: 1, opacity: 1 }} 
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white w-full max-w-sm rounded-[32px] p-8 shadow-2xl text-center"
+            >
+              <div className="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                <CheckCircle2 className="w-10 h-10" />
+              </div>
+              <h3 className="text-2xl font-black text-[#0b3464] mb-2 tracking-tight">¡Reporte Enviado!</h3>
+              <p className="text-sm font-bold text-slate-500 mb-8 px-4">
+                El incidente ha sido registrado. ¿Quieres compartir un resumen por WhatsApp al supervisor?
+              </p>
+              
+              <div className="flex flex-col gap-3">
+                <button 
+                  onClick={shareViaWhatsApp}
+                  className="w-full py-4 bg-[#25D366] text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-emerald-200 flex items-center justify-center gap-2"
+                >
+                  Compartir WhatsApp
+                </button>
+                <button 
+                  onClick={() => { setShowShareModal(null); onReported(); }}
+                  className="w-full py-4 bg-slate-100 text-slate-400 rounded-2xl font-black text-xs uppercase tracking-widest"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
@@ -901,28 +1083,33 @@ function ChatModule({ user }: { user: Operario }) {
   const [inputText, setInputText] = useState('');
 
   useEffect(() => {
-    const loadMessages = () => {
-      const saved = JSON.parse(localStorage.getItem('corporate_chat') || '[]');
-      setMessages(saved);
-    };
-    loadMessages();
-    const interval = setInterval(loadMessages, 3000);
-    return () => clearInterval(interval);
+    const q = query(collection(db, 'chat'), orderBy('timestamp', 'asc'), limit(100));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const msgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
+      setMessages(msgs);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'chat');
+    });
+    return () => unsubscribe();
   }, []);
 
-  const sendMessage = () => {
+  const sendMessage = async () => {
     if (!inputText.trim()) return;
-    const newMessage: Message = {
-      id: Date.now().toString(),
-      sender: user.nombre,
+    const newMessage = {
+      senderId: user.id || 'unknown',
+      senderNombre: user.nombre,
       text: inputText.trim(),
       timestamp: new Date().toISOString(),
       isSupervisor: user.rol === 'supervisor'
     };
-    const updated = [...messages, newMessage];
-    setMessages(updated);
-    localStorage.setItem('corporate_chat', JSON.stringify(updated));
-    setInputText('');
+    
+    try {
+      await addDoc(collection(db, 'chat'), newMessage);
+      setInputText('');
+    } catch (error) {
+      console.error("Error sending message:", error);
+      handleFirestoreError(error, OperationType.CREATE, 'chat');
+    }
   };
 
   return (
@@ -1143,13 +1330,13 @@ function InstallBanner({ installProps }: { installProps: any }) {
       className="fixed top-4 left-4 right-4 z-[9999] bg-blue-600 text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between border border-blue-400/30 backdrop-blur-md bg-opacity-95"
     >
       <div className="flex items-center gap-3">
-        <div className="bg-white/20 p-1 rounded-xl">
+        <div className="bg-white p-1 rounded-xl">
           <img 
-            src="/regenerated_image_1777551940944.png" 
+            src="/logo.png" 
             alt="Logo" 
             className="w-6 h-6 object-contain"
             onError={(e) => {
-              (e.target as HTMLImageElement).src = 'https://cdn-icons-png.flaticon.com/512/1048/1048953.png';
+              (e.target as HTMLImageElement).src = 'https://cdn-icons-png.flaticon.com/512/3649/3649255.png';
             }}
           />
         </div>
@@ -1176,7 +1363,45 @@ export default function App() {
   useReminderChecker();
   // Authentication State
   const [user, setUser] = useStickyState<Operario | null>(null, 'limpieza_user');
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [loginDate, setLoginDate] = useStickyState<string | null>(null, 'limpieza_login_date');
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      setFirebaseUser(fbUser);
+      if (fbUser) {
+        // If we have a firebase user, try to get their profile from Firestore
+        try {
+          const userDoc = await getDoc(doc(db, 'users', fbUser.uid));
+          if (userDoc.exists()) {
+            const userData = { ...(userDoc.data() as any), id: fbUser.uid } as Operario;
+            setUser(userData);
+          } else if (user) {
+            // If user exists in local storage but not in firestore, we might need to sync it
+            // This happens if they signed in with PIN and then linked Google, or vice versa
+            if (user.rol === 'supervisor' || user.rol === 'operario') {
+                await setDoc(doc(db, 'users', fbUser.uid), {
+                    uid: fbUser.uid,
+                    nombre: user.nombre,
+                    rol: user.rol,
+                    email: fbUser.email || null
+                });
+            }
+          }
+        } catch (error) {
+          console.error("Error fetching user profile:", error);
+        }
+      } else {
+        // If logged out from Firebase
+        if (user && user.id && user.id.length > 20) { // Likely a Firebase UID
+           // setUser(null); 
+        }
+      }
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
   
   // App states
   const [loading, setLoading] = useState(false);
@@ -1194,7 +1419,7 @@ export default function App() {
 
   // Menu & Dashboard States
   const [menuOpen, setMenuOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'tareas' | 'horarios' | 'insumos' | 'incidencias' | 'capacitacion' | 'rrhh'>('tareas');
+  const [activeTab, setActiveTab] = useState<'tareas' | 'horarios' | 'insumos' | 'incidencias' | 'capacitacion' | 'rrhh' | 'perfil'>('tareas');
   const [location, setLocation] = useState<string>('');
   const [notificationsCount, setNotificationsCount] = useState(0);
 
@@ -1210,11 +1435,17 @@ export default function App() {
   useEffect(() => {
     // Check pending tasks count to simulate notifications
     async function checkNotifications() {
-      if (!user) return;
-      const { data } = await supabase.from('Limpieza_Tareas_Plan').select('id, fecha_vencimiento, titulo').order('id', { ascending: false }).limit(10);
-      if (data) {
-        const urgentes = data.filter(d => d.fecha_vencimiento);
-        setNotificationsCount(urgentes.length > 0 ? urgentes.length : (data.length > 0 ? 1 : 0));
+      if (!user || !firebaseUser) return;
+      try {
+        const q = query(collection(db, 'tasks'), orderBy('createdAt', 'desc'), limit(10));
+        const querySnapshot = await getDocs(q);
+        const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        if (data.length > 0) {
+          const urgentes = data.filter((d: any) => d.fecha_vencimiento);
+          setNotificationsCount(urgentes.length > 0 ? urgentes.length : 1);
+        }
+      } catch (err) {
+        console.error("Error in checkNotifications:", err);
       }
     }
     checkNotifications();
@@ -1232,7 +1463,13 @@ export default function App() {
     return () => clearInterval(interval);
   }, [user, loginDate]);
 
-  const performGlobalLogout = () => {
+  const performGlobalLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (e) {
+      console.error("Logout error:", e);
+    }
+    
     // Clear all sticky states manually to ensure clean slate
     localStorage.removeItem('limpieza_user');
     localStorage.removeItem('limpieza_login_date');
@@ -1259,10 +1496,19 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    if (window.confirm("¿Está seguro que desea cerrar sesión? Se perderá el estado de la tarea en curso si no la finaliza.")) {
-      performGlobalLogout();
-    }
+    performGlobalLogout();
   };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest animate-pulse">Iniciando Sistema...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!user) {
     return (
@@ -1273,11 +1519,26 @@ export default function App() {
     );
   }
 
+  // If we have a user from sticky state but no firebase user yet, 
+  // and it's a firebase-based ID, we might be loading.
+  // But for PIN users, firebaseUser will be null until we sign in anonymously.
+  if (!firebaseUser && user.id && user.id.length > 20 && authLoading) {
+    // This is for Google users who are still loading auth
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest animate-pulse">Sincronizando...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (user.rol === 'supervisor') {
     return (
       <>
         <InstallBanner installProps={installProps} />
-        <SupervisorDashboard user={user} onLogout={performGlobalLogout} />
+        <SupervisorDashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />
       </>
     );
   }
@@ -1308,14 +1569,14 @@ export default function App() {
                 <div className="flex justify-between items-center mb-10">
                   <div className="flex items-center gap-2">
                     <img 
-                      src="/regenerated_image_1777551940944.png" 
+                      src="/logo.png" 
                       alt="Logo" 
                       className="w-12 h-12 object-contain"
                       onError={(e) => {
                         (e.target as HTMLImageElement).src = 'https://cdn-icons-png.flaticon.com/512/1048/1048953.png';
                       }}
                     />
-                    <span className="font-bold text-lg tracking-tight">Limpieza Arevalo</span>
+                    <span className="font-bold text-lg tracking-tight">Limpieza Arévalo</span>
                   </div>
                   <button onClick={() => setMenuOpen(false)} className="p-2 hover:bg-slate-100 rounded-full text-slate-400">
                     <X className="w-6 h-6" />
@@ -1330,6 +1591,7 @@ export default function App() {
                     { id: 'incidencias', icon: AlertTriangle, label: 'Incidencias' },
                     { id: 'capacitacion', icon: ShieldCheck, label: 'Capacitación' },
                     { id: 'rrhh', icon: FileText, label: 'RRHH' },
+                    { id: 'perfil', icon: UserCircle, label: 'Mi Perfil' },
                   ].map((item) => (
                     <button
                       key={item.id}
@@ -1422,11 +1684,11 @@ export default function App() {
               <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold leading-none mb-1">{user.rol}</p>
               <h2 className="text-sm font-bold text-slate-800 leading-tight truncate max-w-[120px]">{user.nombre}</h2>
             </div>
-            <div className="w-10 h-10 rounded-xl overflow-hidden border border-emerald-100 bg-slate-50 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-xl overflow-hidden border border-blue-100 bg-white flex items-center justify-center p-1">
               <img 
-                src="/regenerated_image_1777551940944.png" 
+                src="/logo.png" 
                 alt="User" 
-                className="w-full h-full object-cover"
+                className="w-full h-full object-contain"
                 onError={(e) => {
                   (e.target as HTMLImageElement).src = 'https://cdn-icons-png.flaticon.com/512/1048/1048953.png';
                 }}
@@ -1437,6 +1699,7 @@ export default function App() {
 
         <Dashboard 
           user={user}
+          onUserUpdate={setUser}
           location={location}
           shiftState={shiftState}
           setShiftState={setShiftState}
@@ -1467,6 +1730,7 @@ export default function App() {
 
 function Dashboard({ 
   user,
+  onUserUpdate,
   location,
   shiftState, setShiftState, 
   shiftStart, setShiftStart,
@@ -1504,7 +1768,6 @@ function Dashboard({
 
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [syncing, setSyncing] = useState(false);
-  const [isScanningQR, setIsScanningQR] = useState(false);
 
   useEffect(() => {
     const handleOnline = () => {
@@ -1538,12 +1801,14 @@ function Dashboard({
       
       for (const record of pending) {
         try {
-          const { error } = await supabase.from('Limpieza_Registros').insert([record]);
-          if (error) {
-            console.error("Sync error for record:", error);
-            remaining.push(record);
-          }
+          // Firebase fallback
+          await addDoc(collection(db, 'logs'), {
+            ...record,
+            operarioId: user?.id || 'unknown',
+            createdAt: serverTimestamp()
+          });
         } catch (e) {
+          console.error("Sync error for record:", e);
           remaining.push(record);
         }
       }
@@ -1566,12 +1831,14 @@ function Dashboard({
     const durationMinutes = Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000));
     
     const payload: any = {
-      operario: user.nombre,
+      operarioId: user?.id || 'unknown',
+      operario: user?.nombre || 'Desconocido',
       accion: comentario ? `${accion} (Obs: ${comentario})` : accion,
       inicio: start.toISOString(),
       fin: end.toISOString(),
       duracion_minutos: durationMinutes,
-      observacion: comentario || null
+      comentario: comentario || null,
+      fecha: start.toLocaleDateString('es-AR')
     };
 
     if (!navigator.onLine) {
@@ -1583,17 +1850,15 @@ function Dashboard({
       return;
     }
 
-    // Save to Supabase (Limpieza_Registros)
+    // Save to Firestore (logs)
     try {
-      let { error } = await supabase.from('Limpieza_Registros').insert([payload]);
-      if (error && error.message.includes('column')) {
-         // Fallback if 'observacion' column missing
-         const fallbackPayload = {...payload};
-         delete fallbackPayload.observacion;
-         await supabase.from('Limpieza_Registros').insert([fallbackPayload]);
-      }
-    } catch (e) {
-      console.error("Error saving record:", e);
+      await addDoc(collection(db, 'logs'), {
+        ...payload,
+        createdAt: serverTimestamp()
+      });
+    } catch (error) {
+      console.error("Error saving record:", error);
+      handleFirestoreError(error, OperationType.CREATE, 'logs');
       // Fallback: Add to queue if network fails during request
       const pendingJson = localStorage.getItem('limpieza_pending_sync');
       const pending = pendingJson ? JSON.parse(pendingJson) : [];
@@ -1602,7 +1867,7 @@ function Dashboard({
     }
   };
 
-  const handleStartShift = async (mode: 'QR' | 'Normal' = 'Normal') => {
+  const handleStartShift = async () => {
     const now = new Date().toISOString();
     if (shiftState === 'idle') {
       setJornadaStart(now);
@@ -1613,14 +1878,6 @@ function Dashboard({
     setShiftStart(now);
     setBreakStart(null);
     setShiftState('active');
-    setIsScanningQR(false);
-
-    if (mode === 'QR') {
-      new Notification("Punto Verificado", {
-        body: "Check-in exitoso vía QR en el sitio.",
-        icon: "/regenerated_image_1777551940944.png"
-      });
-    }
   };
 
   const handlePauseShift = async () => {
@@ -1666,6 +1923,53 @@ function Dashboard({
       setTaskStart(null);
       setTaskComment('');
     }
+  };
+
+  const [pendingReminder, setPendingReminder] = useState<{ id: string, title: string } | null>(null);
+
+  // -- Reminder Checker --
+  useEffect(() => {
+    const checkReminders = () => {
+      const stored = window.localStorage.getItem('limpieza_task_reminders');
+      if (!stored) return;
+      
+      const reminders: Record<string, { time: string, title: string }> = JSON.parse(stored);
+      const now = new Date();
+      let changed = false;
+
+      Object.entries(reminders).forEach(([id, r]) => {
+        const reminderTime = new Date(r.time);
+        if (now >= reminderTime) {
+          // Trigger Notification
+          if ("Notification" in window && Notification.permission === "granted") {
+            new Notification("Recordatorio de Tarea", {
+              body: `Es hora de: ${r.title}`,
+              icon: "/regenerated_image_1777551940944.png"
+            });
+          }
+
+          // Show in-app modal
+          setPendingReminder({ id, title: r.title });
+
+          delete reminders[id];
+          changed = true;
+        }
+      });
+
+      if (changed) {
+        window.localStorage.setItem('limpieza_task_reminders', JSON.stringify(reminders));
+      }
+    };
+
+    const interval = setInterval(checkReminders, 15000); // Check more frequently (every 15s)
+    return () => clearInterval(interval);
+  }, []);
+
+  const openWhatsApp = (phone: string, msg: string) => {
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
+    window.open(url, '_blank');
+    setPendingReminder(null);
   };
 
   return (
@@ -1741,29 +2045,7 @@ function Dashboard({
           <div className="grid grid-cols-1 gap-3">
             {shiftState === 'idle' && (
               <div className="flex flex-col gap-3">
-                {isScanningQR ? (
-                  <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-slate-900 rounded-3xl p-8 flex flex-col items-center gap-4 border-4 border-slate-800 shadow-2xl">
-                     <div className="w-48 h-48 border-2 border-dashed border-emerald-400 rounded-2xl flex items-center justify-center relative overflow-hidden">
-                       <QrCode className="w-24 h-24 text-emerald-400 opacity-20" />
-                       <div className="absolute inset-0 bg-emerald-400/10 animate-pulse" />
-                       <p className="absolute bottom-4 text-[10px] font-black text-emerald-400 uppercase tracking-widest text-center px-4">Escaneando Punto Físico...</p>
-                     </div>
-                     <button onClick={() => handleStartShift('QR')} className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-emerald-500/20">
-                       SIMULAR ESCANEO VERIFICADO
-                     </button>
-                     <button onClick={() => setIsScanningQR(false)} className="text-slate-400 text-[10px] font-black uppercase">Cerrar</button>
-                  </motion.div>
-                ) : (
-                  <div className="flex gap-2">
-                    <ShiftButton color="green" icon={<Play className="w-6 h-6 fill-current" />} label="INICIAR TURNO" onClick={handleStartShift} />
-                    <button 
-                      onClick={() => setIsScanningQR(true)}
-                      className="w-20 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-600 hover:bg-slate-200 transition-all border border-slate-200"
-                    >
-                      <QrCode className="w-8 h-8" />
-                    </button>
-                  </div>
-                )}
+                <ShiftButton color="green" icon={<Play className="w-6 h-6 fill-current" />} label="INICIAR TURNO" onClick={handleStartShift} />
               </div>
             )}
             
@@ -1819,9 +2101,20 @@ function Dashboard({
                  <div className="flex justify-between items-start mb-6">
                    <div className="pr-2">
                      <h3 className="text-lg font-bold text-slate-800 leading-tight">{activeTask.titulo}</h3>
-                     <span className="px-2 py-0.5 bg-slate-200/50 mr-1 rounded text-[10px] font-bold text-slate-600 uppercase mt-2 inline-block">
-                       {activeTask.frecuencia}
-                     </span>
+                     <div className="flex gap-2 mt-2">
+                        <span className="px-2 py-0.5 bg-slate-200/50 rounded text-[10px] font-bold text-slate-600 uppercase inline-block">
+                          {activeTask.frecuencia}
+                        </span>
+                        {activeTask.tipoLimpieza && (
+                          <span className={cn(
+                            "px-2 py-0.5 rounded text-[10px] font-black uppercase inline-block",
+                            activeTask.tipoLimpieza === 'Mantenimiento' ? "bg-blue-100 text-blue-600" :
+                            activeTask.tipoLimpieza === 'Intermedia' ? "bg-amber-100 text-amber-600" : "bg-rose-100 text-rose-600"
+                          )}>
+                            {activeTask.tipoLimpieza}
+                          </span>
+                        )}
+                     </div>
                    </div>
                    <div className="text-right">
                      <div className="text-2xl font-mono font-bold text-emerald-600">{taskDurationText}</div>
@@ -1848,7 +2141,7 @@ function Dashboard({
                  </motion.button>
                </motion.div>
              ) : (
-               <TaskSelector onStart={handleStartTask} shiftActive={shiftState === 'active'} />
+               <TaskSelector onStart={handleStartTask} shiftActive={shiftState === 'active'} user={user} />
              )}
           </section>
         )}
@@ -1871,7 +2164,9 @@ function Dashboard({
           </motion.div>
         )}
 
-        {activeTab === 'insumos' && <InsumosModule />}
+        {activeTab === 'perfil' && <UserProfile user={user} onUpdate={onUserUpdate} />}
+        
+        {activeTab === 'insumos' && <InsumosModule user={user} />}
         {activeTab === 'capacitacion' && <CapacitacionModule />}
         {activeTab === 'rrhh' && <RRHHModule />}
             {activeTab === 'incidencias' && (
@@ -1887,6 +2182,35 @@ function Dashboard({
            </h3>
         )}
 
+        <AnimatePresence>
+          {pendingReminder && (
+            <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[300] flex items-center justify-center p-6">
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }} 
+                animate={{ scale: 1, opacity: 1 }} 
+                className="bg-white w-full max-w-sm rounded-[32px] p-8 shadow-2xl text-center border-4 border-emerald-50"
+              >
+                <div className="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <Bell className="w-10 h-10 animate-bounce" />
+                </div>
+                <h3 className="text-2xl font-black text-[#0b3464] mb-2 tracking-tight">¡Recordatorio!</h3>
+                <p className="text-sm font-bold text-slate-500 mb-8 px-4 leading-relaxed">
+                  Es momento de realizar: <br/>
+                  <span className="text-emerald-600 font-black text-lg block mt-2">"{pendingReminder.title}"</span>
+                </p>
+                
+                <div className="flex flex-col gap-3">
+                  <button 
+                    onClick={() => setPendingReminder(null)}
+                    className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-emerald-200"
+                  >
+                    Entendido
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
@@ -1897,13 +2221,14 @@ function AnunciosBanner() {
   const [currentIndex, setCurrentIndex] = useState(0);
 
   useEffect(() => {
-    const load = () => {
-      const saved = JSON.parse(localStorage.getItem('announcements_db') || '[]');
-      setAnnouncements(saved);
-    };
-    load();
-    const interval = setInterval(load, 5000);
-    return () => clearInterval(interval);
+    const q = query(collection(db, 'announcements'), orderBy('createdAt', 'desc'), limit(5));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAnnouncements(data);
+    }, (error) => {
+      console.error("Error loading announcements:", error);
+    });
+    return () => unsubscribe();
   }, []);
 
   if (announcements.length === 0) return null;
@@ -1968,7 +2293,7 @@ function ShiftButton({ color, label, icon, onClick, small, disabled }: { color: 
 }
 
 // -- Task Selector --
-function TaskSelector({ onStart, shiftActive }: { onStart: (t: TareaPlan) => void, shiftActive: boolean }) {
+function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) => void, shiftActive: boolean, user: Operario }) {
   const [tasks, setTasks] = useState<TareaPlan[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -1984,8 +2309,11 @@ function TaskSelector({ onStart, shiftActive }: { onStart: (t: TareaPlan) => voi
   const [newTaskDesc, setNewTaskDesc] = useState('');
   const [newTaskDate, setNewTaskDate] = useState('');
   const [newTaskFreq, setNewTaskFreq] = useState<'Diaria' | 'Semanal' | 'Mensual' | 'Eventual'>('Diaria');
+  const [newTaskType, setNewTaskType] = useState<'Mantenimiento' | 'Intermedia' | 'Detalles'>('Mantenimiento');
 
-  const [reminders, setReminders] = useStickyState<Record<string, string>>({}, 'limpieza_task_reminders');
+  const [reminders, setReminders] = useStickyState<Record<string, { time: string, title: string }>>({}, 'limpieza_task_reminders');
+  const [showReminderModal, setShowReminderModal] = useState<string | null>(null);
+  const [reminderDateTime, setReminderDateTime] = useState('');
 
   useEffect(() => {
     fetchTasks(0, true);
@@ -2000,23 +2328,25 @@ function TaskSelector({ onStart, shiftActive }: { onStart: (t: TareaPlan) => voi
     }
 
     try {
-      const { data, error } = await supabase
-        .from('Limpieza_Tareas_Plan')
-        .select('*')
-        .ilike('frecuencia', filter)
-        .range(pageNum * pageSize, (pageNum + 1) * pageSize - 1)
-        .order('id', { ascending: false });
+      const q = query(
+        collection(db, 'tasks'),
+        where('frecuencia', '==', filter),
+        orderBy('createdAt', 'desc'),
+        limit(pageSize)
+      );
+      
+      const querySnapshot = await getDocs(q);
+      const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         
-      if (!error && data) {
-        if (isInitial) {
-          setTasks(data);
-        } else {
-          setTasks(prev => [...prev, ...data]);
-        }
-        setHasMore(data.length === pageSize);
+      if (isInitial) {
+        setTasks(data);
+      } else {
+        setTasks(prev => [...prev, ...data]);
       }
+      setHasMore(data.length === pageSize);
     } catch (err) {
       console.error(err);
+      handleFirestoreError(err, OperationType.LIST, 'tasks');
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -2029,7 +2359,7 @@ function TaskSelector({ onStart, shiftActive }: { onStart: (t: TareaPlan) => voi
     fetchTasks(nextPage);
   };
 
-  const filteredTasks = tasks.filter(t => 
+  const filteredTasks = tasks.filter((t: any) => 
     t.titulo.toLowerCase().includes(searchTerm.toLowerCase()) || 
     (t.descripcion || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -2039,58 +2369,59 @@ function TaskSelector({ onStart, shiftActive }: { onStart: (t: TareaPlan) => voi
   const handleCreateTask = async () => {
     if (!newTaskTitle.trim()) return;
     
-    const newTask = { 
+    const newTask: any = { 
       titulo: newTaskTitle.trim(), 
       frecuencia: newTaskFreq,
-      ...(newTaskDesc ? { descripcion: newTaskDesc } : {}),
-      ...(newTaskDate ? { fecha_vencimiento: newTaskDate } : {})
+      tipoLimpieza: newTaskType,
+      descripcion: newTaskDesc || null,
+      fecha_vencimiento: newTaskDate || null,
+      createdAt: serverTimestamp()
     };
     
-    let { data, error } = await supabase
-      .from('Limpieza_Tareas_Plan')
-      .insert([newTask])
-      .select();
-      
-    if (error && error.message.includes('column')) {
-      const result = await supabase.from('Limpieza_Tareas_Plan').insert([{ titulo: newTaskTitle, frecuencia: newTaskFreq }]).select();
-      data = result.data;
-      error = result.error;
-    }
-      
-    if (!error && data) {
-      setTasks([data[0], ...tasks]);
+    try {
+      const docRef = await addDoc(collection(db, 'tasks'), newTask);
+      setTasks([{ id: docRef.id, ...newTask } as any, ...tasks]);
       setIsCreating(false);
       setNewTaskTitle('');
       setNewTaskDesc('');
       setNewTaskDate('');
-    } else if (error) {
-      alert('Error al crear la tarea: ' + error.message);
+    } catch (error) {
+      console.error('Error al crear la tarea:', error);
+      handleFirestoreError(error, OperationType.CREATE, 'tasks');
     }
   };
 
-  const toggleReminder = async (taskId: string | number) => {
-    if (!("Notification" in window)) {
-      alert("Este navegador no soporta notificaciones de escritorio.");
+  const saveReminder = () => {
+    if (!reminderDateTime || !showReminderModal) return;
+    const task = tasks.find(t => t.id === showReminderModal);
+    if (!task) return;
+
+    if (!user.whatsapp) {
+      alert("Debe cargar su número de WhatsApp en su Perfil primero.");
+      setShowReminderModal(null);
       return;
     }
 
+    const newReminders = { ...reminders };
+    newReminders[showReminderModal.toString()] = {
+      time: new Date(reminderDateTime).toISOString(),
+      title: task.titulo
+    };
+    setReminders(newReminders);
+    setShowReminderModal(null);
+    setReminderDateTime('');
+
     if (Notification.permission !== "granted") {
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") return;
+      Notification.requestPermission();
     }
 
-    const taskIdStr = taskId.toString();
-    if (reminders[taskIdStr]) {
-      const newReminders = { ...reminders };
-      delete newReminders[taskIdStr];
-      setReminders(newReminders);
-    } else {
-      setReminders({ ...reminders, [taskIdStr]: new Date().toISOString() });
-      new Notification("Recordatorio Activado", {
-        body: `Te avisaremos sobre la tarea seleccionada.`,
-        icon: "/regenerated_image_1777551940944.png"
-      });
-    }
+    alert("Recordatorio programado correctamente.");
+  };
+
+  const removeReminder = (taskId: string | number) => {
+    const newReminders = { ...reminders };
+    delete newReminders[taskId.toString()];
+    setReminders(newReminders);
   };
 
   return (
@@ -2103,10 +2434,10 @@ function TaskSelector({ onStart, shiftActive }: { onStart: (t: TareaPlan) => voi
             key={f}
             onClick={() => setFilter(f)}
             className={cn(
-              "py-2 px-1 rounded-full text-[10px] sm:text-xs font-bold transition-all truncate flex justify-center items-center",
-              filter === f 
+               filter === f 
                 ? "bg-slate-900 text-white shadow-sm" 
-                : "bg-white text-slate-500 hover:bg-slate-50 border border-slate-200"
+                : "bg-white text-slate-500 hover:bg-slate-50 border border-slate-200",
+              "py-2 px-1 rounded-full text-[10px] sm:text-xs font-bold transition-all truncate flex justify-center items-center"
             )}
           >
             {f}
@@ -2161,29 +2492,46 @@ function TaskSelector({ onStart, shiftActive }: { onStart: (t: TareaPlan) => voi
           </div>
           <div className="relative">
             <textarea 
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-sm font-medium outline-none focus:border-emerald-500 transition-colors resize-none h-20"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-sm font-medium outline-none focus:border-emerald-500 transition-colors resize-none h-16"
               placeholder="Descripción (opcional)"
               value={newTaskDesc}
               onChange={e => setNewTaskDesc(e.target.value)}
             />
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <select 
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-sm font-semibold outline-none focus:border-emerald-500 transition-colors appearance-none"
-              value={newTaskFreq}
-              onChange={e => setNewTaskFreq(e.target.value as any)}
-            >
-              <option value="Diaria">Diaria</option>
-              <option value="Semanal">Semanal</option>
-              <option value="Mensual">Mensual</option>
-              <option value="Eventual">Eventual</option>
-            </select>
+            <div>
+              <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Frecuencia</label>
+              <select 
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold outline-none focus:border-emerald-500 transition-colors appearance-none"
+                value={newTaskFreq}
+                onChange={e => setNewTaskFreq(e.target.value as any)}
+              >
+                <option value="Diaria">Diaria</option>
+                <option value="Semanal">Semanal</option>
+                <option value="Mensual">Mensual</option>
+                <option value="Eventual">Eventual</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Tipo de Limpieza</label>
+              <select 
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold outline-none focus:border-emerald-500 transition-colors appearance-none"
+                value={newTaskType}
+                onChange={e => setNewTaskType(e.target.value as any)}
+              >
+                <option value="Mantenimiento">Mantenimiento</option>
+                <option value="Intermedia">Intermedia</option>
+                <option value="Detalles">Detalles</option>
+              </select>
+            </div>
+          </div>
+          <div className="relative">
+            <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Fecha Vencimiento (Opcional)</label>
             <input 
               type="date"
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-sm font-semibold text-slate-600 outline-none focus:border-emerald-500 transition-colors"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-600 outline-none focus:border-emerald-500 transition-colors"
               value={newTaskDate}
               onChange={e => setNewTaskDate(e.target.value)}
-              title="Fecha de Vencimiento (Opcional)"
             />
           </div>
           <div className="flex gap-2 mt-1">
@@ -2218,11 +2566,25 @@ function TaskSelector({ onStart, shiftActive }: { onStart: (t: TareaPlan) => voi
         ) : (
           <div className="space-y-3">
             {filteredTasks.map(task => (
-              <div key={task.id} className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-2xl shadow-sm hover:border-blue-100 transition-colors">
+              <div key={task.id} className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-2xl shadow-sm hover:border-blue-100 transition-colors relative overflow-hidden">
+                {task.tipoLimpieza && (
+                  <div className={cn(
+                    "absolute top-0 right-0 px-3 py-0.5 text-[8px] font-black uppercase rounded-bl-xl",
+                    task.tipoLimpieza === 'Mantenimiento' ? "bg-blue-100 text-blue-600" :
+                    task.tipoLimpieza === 'Intermedia' ? "bg-amber-100 text-amber-600" : "bg-rose-100 text-rose-600"
+                  )}>
+                    {task.tipoLimpieza}
+                  </div>
+                )}
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-bold text-slate-900 leading-tight truncate">{task.titulo}</div>
+                  <div className="text-sm font-bold text-slate-900 leading-tight truncate pr-16">{task.titulo}</div>
                   <div className="flex flex-wrap gap-2 items-center mt-1">
-                    <span className="text-[9px] font-black text-slate-500 uppercase bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200">{task.frecuencia}</span>
+                    <span className="text-[9px] font-black text-slate-500 uppercase bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200 flex items-center gap-1">
+                      {task.frecuencia === 'Diaria' && <Clock className="w-2.5 h-2.5" />}
+                      {task.frecuencia === 'Semanal' && <Calendar className="w-2.5 h-2.5" />}
+                      {task.frecuencia === 'Mensual' && <LayoutGrid className="w-2.5 h-2.5" />}
+                      {task.frecuencia}
+                    </span>
                     {task.fecha_vencimiento && (
                       <span className="text-[9px] font-black text-rose-500 flex items-center gap-0.5">
                         <Calendar className="w-2.5 h-2.5"/> {task.fecha_vencimiento}
@@ -2234,14 +2596,14 @@ function TaskSelector({ onStart, shiftActive }: { onStart: (t: TareaPlan) => voi
                 
                 <div className="flex items-center gap-1 ml-2">
                   <button 
-                    onClick={() => toggleReminder(task.id)}
+                    onClick={() => reminders[task.id.toString()] ? removeReminder(task.id) : setShowReminderModal(task.id.toString())}
                     className={cn(
                       "p-2 rounded-xl transition-all",
-                      reminders[task.id.toString()] ? "bg-blue-50 text-blue-600" : "text-slate-300 hover:bg-slate-50"
+                      reminders[task.id.toString()] ? "bg-blue-50 text-blue-600 shadow-inner" : "text-slate-300 hover:bg-slate-50"
                     )}
                     title="Configurar Recordatorio"
                   >
-                    <Bell className={cn("w-5 h-5", reminders[task.id.toString()] && "fill-current")} />
+                    <Bell className={cn("w-5 h-5", reminders[task.id.toString()] && "fill-current animate-bounce")} />
                   </button>
                   <motion.button 
                     whileTap={{ scale: 0.95 }}
@@ -2270,137 +2632,347 @@ function TaskSelector({ onStart, shiftActive }: { onStart: (t: TareaPlan) => voi
           </div>
         )}
       </div>
+
+      <AnimatePresence>
+        {showReminderModal && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }} 
+              animate={{ scale: 1, opacity: 1 }} 
+              className="bg-white w-full max-w-sm rounded-[32px] p-6 shadow-2xl relative"
+            >
+              <h3 className="text-xl font-black text-[#0b3464] mb-2 tracking-tight">Programar Recordatorio</h3>
+              <p className="text-xs text-slate-400 mb-6 font-bold uppercase tracking-widest">Recibirás notificación y WhatsApp</p>
+              
+              <div className="mb-6">
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Fecha y Hora</label>
+                <input 
+                  type="datetime-local" 
+                  value={reminderDateTime}
+                  onChange={e => setReminderDateTime(e.target.value)}
+                  className="w-full bg-slate-50 border-2 border-slate-100 focus:border-blue-500 rounded-2xl px-5 py-3 font-bold outline-none"
+                />
+              </div>
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setShowReminderModal(null)}
+                  className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-black text-xs uppercase tracking-widest"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={saveReminder}
+                  className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-blue-200"
+                >
+                  Confirmar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
+
 // -- Login Screen --
 
 function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: string) => void, installProps: any }) {
-  const [nombre, setNombre] = useState('');
+  const [loginMethod, setLoginMethod] = useState<'google' | 'pin'>('google');
+  const [usuario, setUsuario] = useState('');
   const [pin, setPin] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [geoStatus, setGeoStatus] = useState<'checking' | 'allowed' | 'denied' | 'outside'>('checking');
+  const [userCoords, setUserCoords] = useState<{ lat: number, lng: number } | null>(null);
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!nombre.trim() || !pin.trim()) {
-      setError('Por favor complete todos los campos');
+  const TARGET_LAT = -26.833782; 
+  const TARGET_LNG = -65.200598;
+  const ALLOWED_RADIUS_METERS = 500;
+
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      setGeoStatus('denied');
+      setError('La geolocalización no es compatible con su navegador.');
       return;
     }
 
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        setUserCoords({ lat: latitude, lng: longitude });
+        const distance = calculateDistance(latitude, longitude, TARGET_LAT, TARGET_LNG);
+        if (distance <= ALLOWED_RADIUS_METERS) {
+          setGeoStatus('allowed');
+          setError('');
+        } else {
+          setGeoStatus('outside');
+        }
+      },
+      () => {
+        setGeoStatus('denied');
+        setError('Debe habilitar la ubicación para registrar su entrada.');
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, []);
+
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
+    "Notification" in window ? Notification.permission : "denied"
+  );
+
+  const requestNotifPermission = async () => {
+    if ("Notification" in window) {
+      const permission = await Notification.requestPermission();
+      setNotifPermission(permission);
+    }
+  };
+
+  const needsNotifAction = notifPermission === "default";
+  
+  // Allow clicking buttons if not loading, validation happens inside handlers
+  const isButtonEnabled = !loading;
+
+  const handleGoogleLogin = async () => {
     setLoading(true);
     setError('');
-
     try {
-      const { data, error: dbError } = await supabase
-        .from('Limpieza_Personal')
-        .select('*')
-        .eq('nombre', nombre.trim())
-        .eq('pin', pin.trim())
-        .single();
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      const fbUser = result.user;
+      
+      let userData: any = null;
+      let userId: string = fbUser.uid;
 
-      if (dbError || !data) {
-        setError('Nombre o PIN incorrectos. Verifique sus datos.');
+      const userRef = doc(db, 'users', fbUser.uid);
+      const userSnap = await getDoc(userRef);
+      
+      if (userSnap.exists()) {
+        userData = userSnap.data();
       } else {
-        // Fallback robusto en caso de que la columna 'rol' no exista: si es admin o supervisor asignarle ese rol temporalmente
-        const isSuper = (data.rol === 'supervisor') || nombre.toLowerCase().includes('admin') || nombre.toLowerCase().includes('sup') || nombre.toLowerCase() === 'prueba supervisor' || nombre.toLowerCase() === 'walter medina';
-        
-        onLogin({ nombre: data.nombre, rol: isSuper ? 'supervisor' : 'operario' }, getArgentinaDate());
+        const q = query(collection(db, 'users'), where('email', '==', fbUser.email));
+        const qSnap = await getDocs(q);
+        if (!qSnap.empty) {
+          userData = qSnap.docs[0].data();
+          userId = qSnap.docs[0].id;
+        }
       }
+
+      if (!userData) {
+        throw new Error('Cuenta de Google no registrada en el sistema.');
+      }
+
+      // Check permissions based on role
+      const isSupervisor = userData.rol === 'supervisor';
+      
+      if (!isSupervisor && userData.rol === 'operario') {
+        if (geoStatus !== 'allowed') {
+          throw new Error('Los operarios deben estar en el rango de la empresa para ingresar.');
+        }
+      }
+      
+      // Handle anonymous sign-in for PIN users if not already authenticated
+      if (!auth.currentUser) {
+        try {
+          await signInAnonymously(auth);
+        } catch (e) {
+          console.warn("Anonymous sign-in error:", e);
+        }
+      }
+
+      if (notifPermission !== 'granted' && "Notification" in window) {
+        try {
+          const perm = await Notification.requestPermission();
+          setNotifPermission(perm);
+          // Only block if they explicitly DENIED and app really needs it, 
+          // but for now let's just warn and allow if they are in default state after prompt
+          if (perm === 'denied') {
+             throw new Error('Debe habilitar las notificaciones para ingresar.');
+          }
+        } catch (e: any) {
+          if (e.message.includes('notificaciones')) throw e;
+          console.warn("Notification error:", e);
+        }
+      }
+
+      onLogin({ ...userData, id: userId || fbUser.uid } as any, getArgentinaDate());
     } catch (err: any) {
-      setError(err.message || 'Error de conexión');
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   };
 
+  const handlePinLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!usuario.trim() || !pin.trim()) return;
+    setLoading(true);
+    setError('');
+    try {
+      if (!auth.currentUser) await signInAnonymously(auth);
+      const q = query(collection(db, 'users'), where('usuario', '==', usuario.trim().toUpperCase()), where('pin', '==', pin.trim()));
+      const querySnapshot = await getDocs(q);
+      
+      let userData: any = null;
+      let userId: string = '';
+
+      if (querySnapshot.empty) {
+        const u = usuario.trim().toUpperCase();
+        if (u === 'WMEDINA' && pin === '1234') {
+          userData = { nombre: 'Walter Medina', usuario: 'WMEDINA', rol: 'supervisor' };
+          userId = 'sv-wmedina';
+        } else if (u === 'ABEL' && pin === '1234') {
+          userData = { nombre: 'Abel Supervisor', usuario: 'ABEL', rol: 'supervisor' };
+          userId = 'sv-abel';
+        } else {
+          throw new Error('Usuario o PIN incorrectos.');
+        }
+      } else {
+        userData = querySnapshot.docs[0].data();
+        userId = querySnapshot.docs[0].id;
+      }
+
+      // Check permissions based on role
+      const isSupervisor = userData.rol === 'supervisor';
+      if (!isSupervisor && userData.rol === 'operario') {
+        if (geoStatus !== 'allowed') {
+          throw new Error('Los operarios deben estar en el rango de la empresa para ingresar.');
+        }
+      }
+
+      if (notifPermission !== 'granted' && "Notification" in window) {
+        try {
+          const perm = await Notification.requestPermission();
+          setNotifPermission(perm);
+          if (perm === 'denied') {
+            throw new Error('Debe habilitar las notificaciones para ingresar.');
+          }
+        } catch (e: any) {
+          if (e.message.includes('notificaciones')) throw e;
+          console.warn("Notification error:", e);
+        }
+      }
+
+      onLogin({ ...userData, id: userId } as any, getArgentinaDate());
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
+    const R = 6371e3;
+    const φ1 = lat1 * Math.PI/180;
+    const φ2 = lat2 * Math.PI/180;
+    const Δφ = (lat2-lat1) * Math.PI/180;
+    const Δλ = (lon2-lon1) * Math.PI/180;
+    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) * Math.sin(Δλ/2);
+    return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+  }
+
   return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
       <motion.div 
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-sm bg-white p-8 rounded-3xl shadow-2xl relative overflow-hidden"
+        initial={{ opacity: 0, scale: 0.9 }} 
+        animate={{ opacity: 1, scale: 1 }} 
+        className="w-full max-w-sm bg-white p-8 rounded-[40px] shadow-2xl relative overflow-hidden"
       >
-        <div className="absolute top-0 left-0 w-full h-2 bg-blue-500"></div>
-
-        <div className="mb-8 text-center flex flex-col items-center">
-          <div className="w-48 h-48 mb-4 bg-white rounded-3xl flex items-center justify-center overflow-hidden shadow-sm p-4">
+        <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-600 to-sky-400"></div>
+        
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center mx-auto mb-4 border border-blue-100 shadow-sm overflow-hidden p-2">
             <img 
-              src="/regenerated_image_1777551940944.png" 
-              alt="Logo Arevalo" 
+              src="/logo.png" 
+              alt="Logo" 
               className="w-full h-full object-contain"
               onError={(e) => {
-                (e.target as HTMLImageElement).src = 'https://cdn-icons-png.flaticon.com/512/1048/1048953.png';
+                e.currentTarget.src = "https://cdn-icons-png.flaticon.com/512/3649/3649255.png";
               }}
             />
           </div>
-          <h1 className="text-2xl font-black text-[#0b3464] tracking-tight">Acceso Rápido</h1>
-          <p className="text-slate-500 font-medium text-sm mt-1 uppercase tracking-widest">Sector de Limpieza</p>
+          <h1 className="text-2xl font-black text-[#0b3464] tracking-tight">Acceso Corporativo</h1>
+          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-[0.3em] mt-1">Gestión de Higiene - Arévalo</p>
+          
+          <div className="mt-4 flex flex-col gap-2 items-center">
+            <div className="flex justify-center">
+              {geoStatus === 'checking' && <div className="text-blue-500 font-bold text-[9px] uppercase tracking-widest bg-blue-50 px-3 py-1 rounded-full animate-pulse">Verificando GPS...</div>}
+              {geoStatus === 'allowed' && <div className="text-emerald-600 font-bold text-[9px] uppercase tracking-widest bg-emerald-50 px-3 py-1 rounded-full flex items-center gap-1"><MapPin className="w-3 h-3" /> GPS en Rango</div>}
+              {geoStatus === 'outside' && <div className="text-rose-600 font-bold text-[9px] uppercase tracking-widest bg-rose-50 px-3 py-1 rounded-full flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Fuera de Zona</div>}
+              {geoStatus === 'denied' && <div className="text-rose-600 font-bold text-[9px] uppercase tracking-widest bg-rose-50 px-3 py-1 rounded-full flex items-center gap-1"><ShieldAlert className="w-3 h-3" /> GPS Requerido</div>}
+            </div>
+
+            {needsNotifAction && (
+              <button 
+                onClick={requestNotifPermission}
+                className="flex items-center gap-2 text-amber-600 font-bold text-[9px] uppercase tracking-widest bg-amber-50 px-3 py-1 rounded-full border border-amber-200 animate-bounce"
+              >
+                <Bell className="w-3 h-3" /> Tocar para Activar Notificaciones
+              </button>
+            )}
+            {notifPermission === 'granted' && (
+              <div className="text-emerald-600 font-bold text-[9px] uppercase tracking-widest bg-emerald-50 px-3 py-1 rounded-full flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3" /> Alertas Activas
+              </div>
+            )}
+          </div>
         </div>
 
-        <form onSubmit={handleLogin} className="flex flex-col gap-5">
-          <div className="bg-blue-50 text-blue-700 text-xs p-4 rounded-xl border border-blue-100 bg-opacity-50">
-            <p className="font-semibold mb-1 flex gap-1"><ShieldAlert className="w-4 h-4"/> Tip para probar roles:</p>
-            <p>Ingresa como operario normal, o si ingresas un nombre que contenga "Admin" o "Sup", entrarás al panel de Supervisor (ej: "Juan Admin").</p>
-          </div>
+        <div className="flex bg-slate-100 p-1 rounded-2xl mb-6">
+          <button onClick={() => setLoginMethod('google')} className={cn("flex-1 py-4 text-[10px] font-black uppercase rounded-xl transition-all flex items-center justify-center gap-2", loginMethod === 'google' ? "bg-white text-blue-600 shadow-sm" : "text-slate-400")}>
+            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-4 h-4" alt="G" /> Google
+          </button>
+          <button onClick={() => setLoginMethod('pin')} className={cn("flex-1 py-4 text-[10px] font-black uppercase rounded-xl transition-all", loginMethod === 'pin' ? "bg-white text-blue-600 shadow-sm" : "text-slate-400")}>PIN</button>
+        </div>
 
-          {error && (
-            <div className="bg-red-50 text-red-600 text-sm p-4 rounded-xl font-medium border border-red-100 flex items-start gap-2">
-              <span className="mt-0.5">⚠️</span>
-              <p>{error}</p>
+        <div className="flex flex-col gap-4">
+          {error && <div className="bg-red-50 text-red-600 text-[10px] p-3 rounded-2xl font-bold border border-red-100 flex items-start gap-2"><ShieldAlert className="w-4 h-4 shrink-0" /><p>{error}</p></div>}
+          
+          {loginMethod === 'google' ? (
+            <button 
+              disabled={loading} 
+              onClick={handleGoogleLogin} 
+              className={cn(
+                "w-full py-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 flex items-center justify-center gap-3", 
+                isButtonEnabled ? "bg-[#0b3464] text-white hover:bg-[#0d417a]" : "bg-slate-200 text-slate-400"
+              )}
+            >
+              {loading ? <RefreshCcw className="w-5 h-5 animate-spin" /> : <>Ingresar con Google <MoveRight className="w-4 h-4" /></>}
+            </button>
+          ) : (
+            <form onSubmit={handlePinLogin} className="flex flex-col gap-4">
+              <div className="relative group">
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">Usuario</label>
+                <div className="relative">
+                  <UserCircle className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
+                  <input type="text" value={usuario} onChange={e => setUsuario(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-5 py-3.5 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 transition-all" placeholder="USUARIO" />
+                </div>
+              </div>
+              <div className="relative group">
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">PIN</label>
+                <div className="relative">
+                  <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
+                  <input type="password" value={pin} onChange={e => setPin(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-5 py-3.5 text-center text-xl font-bold tracking-[0.5em] font-mono outline-none focus:border-blue-500 transition-all" placeholder="****" />
+                </div>
+              </div>
+
+              <button disabled={loading} type="submit" className={cn("w-full py-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2", isButtonEnabled ? "bg-[#0b3464] text-white hover:bg-[#0d417a]" : "bg-slate-200 text-slate-400")}>
+                {loading ? <RefreshCcw className="w-5 h-5 animate-spin" /> : <>Ingresar <MoveRight className="w-4 h-4" /></>}
+              </button>
+            </form>
+          )}
+          
+          {(geoStatus !== 'allowed' || notifPermission !== 'granted') && (
+            <div className="bg-rose-50 p-4 rounded-3xl border border-rose-100">
+               <p className="text-[9px] font-black text-rose-500 uppercase tracking-widest text-center leading-relaxed">
+                 {geoStatus !== 'allowed' && "• Se requiere GPS en rango de la empresa\n"}
+                 {notifPermission !== 'granted' && "• Debe habilitar las notificaciones para ingresar"}
+               </p>
             </div>
           )}
-
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">
-              Nombre del Operario
-            </label>
-            <input 
-              type="text" 
-              value={nombre}
-              onChange={e => setNombre(e.target.value)}
-              className="w-full bg-slate-50 border-2 border-slate-200 focus:border-blue-500 rounded-2xl px-5 py-4 text-lg font-semibold text-slate-800 outline-none transition-colors"
-              placeholder="Ej. Juan"
-              autoComplete="off"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">
-              PIN (4 dígitos)
-            </label>
-            <input 
-              type="password" 
-              value={pin}
-              onChange={e => setPin(e.target.value)}
-              maxLength={4}
-              inputMode="numeric"
-              pattern="[0-9]*"
-              className="w-full bg-slate-50 border-2 border-slate-200 focus:border-blue-500 rounded-2xl px-5 py-4 text-center text-3xl tracking-[1em] font-bold text-slate-800 outline-none transition-colors"
-              placeholder="••••"
-            />
-          </div>
-
-          <motion.button 
-            whileTap={{ scale: 0.96 }}
-            disabled={loading}
-            type="submit"
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white py-5 rounded-2xl mt-4 font-black uppercase tracking-widest shadow-lg shadow-blue-600/30 transition-all focus:outline-none flex justify-center items-center"
-          >
-            {loading ? <RefreshCcw className="w-6 h-6 animate-spin" /> : 'INGRESAR'}
-          </motion.button>
-        </form>
-
-        <div className="mt-8 pt-6 border-t border-slate-100 flex flex-col gap-3">
-          <button 
-             onClick={installProps.handleInstall}
-             className="w-full flex items-center justify-center gap-3 bg-[#eaf3ff] text-[#0b3464] py-4 rounded-2xl font-black text-[11px] uppercase tracking-widest hover:bg-[#d8e9ff] transition-all active:scale-95 border-2 border-[#0b3464] shadow-sm"
-           >
-             <Monitor className="w-5 h-5 text-[#0b3464]" />
-             Instalar Aplicación en Celular
-           </button>
-           <p className="text-[10px] text-center text-slate-400 font-medium italic">Versión 2.2 - Sistema de Gestión Arevalo</p>
         </div>
       </motion.div>
     </div>
@@ -2416,21 +2988,24 @@ function OperarioStockManager({ user }: { user: Operario }) {
   const handleSolicitar = async () => {
     if (!solicitud.trim()) return;
     setEnviando(true);
-    // Simular envío o guardado en Base de Datos (Limpieza_Solicitudes_Insumos)
     try {
-      const { error } = await supabase.from('Limpieza_Registros').insert([{
+      await addDoc(collection(db, 'logs'), {
+        operarioId: user.id || 'unknown',
         operario: user.nombre,
         accion: `Solicitud Insumos: ${solicitud}`,
         inicio: new Date().toISOString(),
-        fin: new Date().toISOString()
-      }]);
-      if (!error) {
-        alert("Solicitud de insumos enviada al supervisor.");
-        setSolicitud('');
-      } else {
-        alert("Error al solicitar: " + error.message);
-      }
-    } catch(e) {}
+        fin: new Date().toISOString(),
+        duracion_minutos: 0,
+        comentario: solicitud,
+        estado: 'Pendiente', // For supervisor approval if needed
+        createdAt: serverTimestamp()
+      });
+      alert("Solicitud de insumos enviada al supervisor.");
+      setSolicitud('');
+    } catch (error) {
+      console.error("Error al solicitar:", error);
+      handleFirestoreError(error, OperationType.CREATE, 'logs');
+    }
     setEnviando(false);
   };
 
@@ -2458,44 +3033,65 @@ function OperarioStockManager({ user }: { user: Operario }) {
 }
 
 function SupervisorStockManager() {
-  const [insumos, setInsumos] = useState<{ id: string, nombre: string, cantidad: number }[]>([
-    { id: '1', nombre: 'Lavandina (Litros)', cantidad: 10 },
-    { id: '2', nombre: 'Trapos de Piso', cantidad: 50 },
-    { id: '3', nombre: 'Escobas', cantidad: 8 },
-    { id: '4', nombre: 'Detergente (Litros)', cantidad: 15 },
-  ]);
-
-  const [pedidos, setPedidos] = useState<PedidoInsumo[]>([]);
+  const [insumos, setInsumos] = useState<any[]>([]);
+  const [pedidos, setPedidos] = useState<any[]>([]);
   const [nuevoInsumo, setNuevoInsumo] = useState('');
   const [nuevaCant, setNuevaCant] = useState('');
 
   useEffect(() => {
-    // Load pending requests from local storage
-    const loadRequests = () => {
-      const saved = JSON.parse(localStorage.getItem('pending_insumos') || '[]');
-      setPedidos(saved);
+    // Insumos inventory
+    const unsubscribeInsumos = onSnapshot(collection(db, 'supplies'), (snapshot) => {
+      setInsumos(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    // Pedidos (we'll filter logs that are requests and pending)
+    const q = query(collection(db, 'logs'), where('accion', '>=', 'Solicitud Insumos:'), where('estado', '==', 'Pendiente'));
+    const unsubscribePedidos = onSnapshot(q, (snapshot) => {
+      setPedidos(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    return () => {
+      unsubscribeInsumos();
+      unsubscribePedidos();
     };
-    loadRequests();
-    const interval = setInterval(loadRequests, 5000);
-    return () => clearInterval(interval);
   }, []);
 
-  const agregarInsumo = () => {
+  const agregarInsumo = async () => {
     if (nuevoInsumo.trim() && !isNaN(Number(nuevaCant))) {
-      setInsumos([...insumos, { id: Date.now().toString(), nombre: nuevoInsumo, cantidad: Number(nuevaCant) }]);
-      setNuevoInsumo('');
-      setNuevaCant('');
+      try {
+        await addDoc(collection(db, 'supplies'), {
+          nombre: nuevoInsumo.trim(),
+          cantidad: Number(nuevaCant),
+          unidad: 'unidades',
+          stock_minimo: 5,
+          createdAt: serverTimestamp()
+        });
+        setNuevoInsumo('');
+        setNuevaCant('');
+      } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, 'supplies');
+      }
     }
   };
 
-  const updateCant = (id: string, diff: number) => {
-    setInsumos(prev => prev.map(i => i.id === id ? { ...i, cantidad: Math.max(0, i.cantidad + diff) } : i));
+  const updateCant = async (id: string, diff: number) => {
+    const item = insumos.find(i => i.id === id);
+    if (!item) return;
+    try {
+      await updateDoc(doc(db, 'supplies', id), { 
+        cantidad: Math.max(0, item.cantidad + diff) 
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `supplies/${id}`);
+    }
   };
 
-  const responderPedido = (pedidoId: string, status: 'Aprobado' | 'Rechazado') => {
-    const updated = pedidos.map(p => p.id === pedidoId ? { ...p, estado: status } : p);
-    setPedidos(updated);
-    localStorage.setItem('pending_insumos', JSON.stringify(updated));
+  const responderPedido = async (pedidoId: string, status: 'Aprobado' | 'Rechazado') => {
+    try {
+      await updateDoc(doc(db, 'logs', pedidoId), { estado: status });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `logs/${pedidoId}`);
+    }
   };
 
   return (
@@ -2643,36 +3239,37 @@ function SupervisorTasksManager() {
     }
 
     try {
-      let query = supabase.from('Limpieza_Tareas_Plan').select('*');
+      let q = query(collection(db, 'tasks'), orderBy('createdAt', 'desc'), limit(pageSize));
       
       if (frecuenciaFilter !== 'Todas') {
-        query = query.eq('frecuencia', frecuenciaFilter);
+        q = query(collection(db, 'tasks'), where('frecuencia', '==', frecuenciaFilter), orderBy('createdAt', 'desc'), limit(pageSize));
       }
       
-      const { data: tasksData, error: tasksError } = await query
-        .range(pageNum * pageSize, (pageNum + 1) * pageSize - 1)
-        .order('id', { ascending: false });
+      const [tasksRes, usersRes] = await Promise.all([
+        getDocs(q),
+        getDocs(collection(db, 'users'))
+      ]);
 
-      const { data: usersData } = await supabase.from('Limpieza_Personal').select('*');
+      const tasksData = tasksRes.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const usersData = usersRes.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         
-      if (!tasksError && tasksData) {
-        const mappedData = tasksData.map((t: any) => ({
-          ...t,
-          _estadoSimulado: Math.random() > 0.5 ? 'Pendiente' : 'Completada'
-        }));
-        
-        if (isInitial) {
-          setTasks(mappedData);
-        } else {
-          setTasks(prev => [...prev, ...mappedData]);
-        }
-        setHasMore(tasksData.length === pageSize);
+      const mappedData = tasksData.map((t: any) => ({
+        ...t,
+        _estadoSimulado: Math.random() > 0.5 ? 'Pendiente' : 'Completada'
+      }));
+      
+      if (isInitial) {
+        setTasks(mappedData);
+      } else {
+        setTasks(prev => [...prev, ...mappedData]);
       }
+      setHasMore(tasksData.length === pageSize);
       if (usersData) {
-        setOperarios(usersData);
+        setOperarios(usersData as any);
       }
     } catch (err) {
       console.error(err);
+      handleFirestoreError(err, OperationType.LIST, 'tasks');
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -2732,39 +3329,28 @@ function SupervisorTasksManager() {
   const handleCreateOrEditTask = async () => {
     if (!newTaskTitle.trim()) return;
     
-    const taskPayload = { 
+    const taskPayload: any = { 
       titulo: newTaskTitle.trim(), 
       frecuencia: newTaskFreq,
-      ...(newTaskDesc ? { descripcion: newTaskDesc } : {}),
-      ...(newTaskDate ? { fecha_vencimiento: newTaskDate } : {}),
-      ...(asignados.length > 0 ? { asignados } : { asignados: null }),
-      ...(duracionEst ? { duracion_estimada_minutos: parseInt(duracionEst) } : {})
+      descripcion: newTaskDesc || null,
+      fecha_vencimiento: newTaskDate || null,
+      asignados: asignados.length > 0 ? asignados : null,
+      duracion_estimada_minutos: duracionEst ? parseInt(duracionEst) : null,
+      updatedAt: serverTimestamp()
     };
     
-    let result;
-    if (editingId) {
-      result = await supabase.from('Limpieza_Tareas_Plan').update(taskPayload).eq('id', editingId).select();
-    } else {
-      result = await supabase.from('Limpieza_Tareas_Plan').insert([taskPayload]).select();
-    }
-      
-    if (result.error && result.error.message.includes('column')) {
+    try {
       if (editingId) {
-        result = await supabase.from('Limpieza_Tareas_Plan').update({ titulo: taskPayload.titulo, frecuencia: taskPayload.frecuencia }).eq('id', editingId).select();
+        await updateDoc(doc(db, 'tasks', editingId.toString()), taskPayload);
+        setTasks(tasks.map(t => t.id === editingId ? { ...t, ...taskPayload } : t));
       } else {
-        result = await supabase.from('Limpieza_Tareas_Plan').insert([{ titulo: taskPayload.titulo, frecuencia: taskPayload.frecuencia }]).select();
-      }
-    }
-      
-    if (!result.error && result.data) {
-      if (editingId) {
-        setTasks(tasks.map(t => t.id === editingId ? { ...t, ...result.data[0] } : t));
-      } else {
-        setTasks([{ ...result.data[0], _estadoSimulado: 'Pendiente' }, ...tasks]);
+        const docRef = await addDoc(collection(db, 'tasks'), { ...taskPayload, createdAt: serverTimestamp() });
+        setTasks([{ id: docRef.id, ...taskPayload, _estadoSimulado: 'Pendiente' }, ...tasks]);
       }
       resetForm();
-    } else if (result.error) {
-      alert('Error al guardar la tarea: ' + result.error.message);
+    } catch (error) {
+      console.error('Error in handleCreateOrEditTask:', error);
+      handleFirestoreError(error, OperationType.WRITE, 'tasks');
     }
   };
 
@@ -3257,6 +3843,7 @@ function JibbleHourReport({ registros, operarios, reportDateMode, setReportDateM
 
 function TaskCalendarView({ tasks }: { tasks: any[] }) {
   const [selectedMonth, setSelectedMonth] = useState(new Date());
+  const [selectedDayTasks, setSelectedDayTasks] = useState<{tasks: any[], date: string} | null>(null);
   
   const daysInMonth = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0).getDate();
   const firstDayOfMonth = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1).getDay();
@@ -3264,51 +3851,110 @@ function TaskCalendarView({ tasks }: { tasks: any[] }) {
   const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
   return (
-    <div className="bg-white p-6 rounded-3xl border border-slate-100 mt-6">
-      <div className="flex justify-between items-center mb-6">
-        <h3 className="font-bold text-slate-800 flex items-center gap-2">
-          <Calendar className="w-5 h-5 text-blue-500" /> Planificación Mensual
-        </h3>
-        <div className="flex items-center gap-4 bg-slate-50 p-1.5 rounded-xl border border-slate-100">
-          <button onClick={() => setSelectedMonth(new Date(selectedMonth.setMonth(selectedMonth.getMonth() - 1)))} className="p-1 hover:bg-white rounded-lg shadow-sm">
-             <X className="w-4 h-4 rotate-45" /> {/* Simple arrow back surrogate */}
-          </button>
-          <span className="text-xs font-bold text-slate-600 min-w-[100px] text-center">{monthNames[selectedMonth.getMonth()]} {selectedMonth.getFullYear()}</span>
-          <button onClick={() => setSelectedMonth(new Date(selectedMonth.setMonth(selectedMonth.getMonth() + 1)))} className="p-1 hover:bg-white rounded-lg shadow-sm">
-             <Plus className="w-4 h-4 rotate-45" /> {/* Simple arrow next surrogate */}
-          </button>
+    <div className="flex flex-col gap-6 mt-6">
+      <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm relative overflow-hidden">
+        <div className="flex justify-between items-center mb-6">
+          <h3 className="font-bold text-slate-800 flex items-center gap-2">
+            <Calendar className="w-5 h-5 text-blue-500" /> Planificación Mensual
+          </h3>
+          <div className="flex items-center gap-4 bg-slate-50 p-1.5 rounded-xl border border-slate-100">
+            <button onClick={() => setSelectedMonth(new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() - 1, 1))} className="p-1 hover:bg-white rounded-lg shadow-sm">
+               <ChevronRight className="w-4 h-4 rotate-180" />
+            </button>
+            <span className="text-xs font-bold text-slate-600 min-w-[100px] text-center">{monthNames[selectedMonth.getMonth()]} {selectedMonth.getFullYear()}</span>
+            <button onClick={() => setSelectedMonth(new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 1))} className="p-1 hover:bg-white rounded-lg shadow-sm">
+               <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+        
+        <div className="grid grid-cols-7 gap-2">
+          {['D', 'L', 'M', 'X', 'J', 'V', 'S'].map(d => (
+            <div key={d} className="text-center text-[10px] font-black text-slate-400 py-2 uppercase">{d}</div>
+          ))}
+          {Array.from({ length: firstDayOfMonth }).map((_, i) => (
+            <div key={`empty-${i}`} className="h-16 lg:h-20 bg-slate-50/50 rounded-xl" />
+          ))}
+          {Array.from({ length: daysInMonth }).map((_, i) => {
+            const day = i + 1;
+            const dateStr = `${selectedMonth.getFullYear()}-${(selectedMonth.getMonth() + 1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+            const dayTasks = tasks.filter(t => t.fecha_vencimiento === dateStr);
+            const isSelected = selectedDayTasks?.date === dateStr;
+            
+            return (
+              <div 
+                key={day} 
+                onClick={() => dayTasks.length > 0 ? setSelectedDayTasks(isSelected ? null : { tasks: dayTasks, date: dateStr }) : null}
+                className={cn(
+                  "h-16 lg:h-20 p-2 border rounded-2xl flex flex-col gap-1 overflow-hidden transition-all relative cursor-pointer",
+                  dayTasks.length > 0 ? (isSelected ? "border-blue-500 bg-blue-50/50 shadow-sm" : "bg-white border-slate-100 hover:border-blue-200") : "bg-white border-slate-50 opacity-40 cursor-default"
+                )}
+              >
+                <span className={cn("text-[10px] font-black", dayTasks.length > 0 ? "text-slate-800" : "text-slate-300")}>{day}</span>
+                <div className="flex flex-wrap gap-0.5 mt-auto">
+                  {dayTasks.map((_, idx) => (
+                    <div key={idx} className="w-1 h-1 bg-blue-400 rounded-full" />
+                  ))}
+                </div>
+                {dayTasks.length > 0 && <div className="absolute top-1 right-1 w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />}
+              </div>
+            );
+          })}
         </div>
       </div>
-      
-      <div className="grid grid-cols-7 gap-2">
-        {['D', 'L', 'M', 'X', 'J', 'V', 'S'].map(d => (
-          <div key={d} className="text-center text-[10px] font-black text-slate-400 py-2 uppercase">{d}</div>
-        ))}
-        {Array.from({ length: firstDayOfMonth }).map((_, i) => (
-          <div key={`empty-${i}`} className="h-20 lg:h-24 bg-slate-50/50 rounded-xl" />
-        ))}
-        {Array.from({ length: daysInMonth }).map((_, i) => {
-          const day = i + 1;
-          const dateStr = `${selectedMonth.getFullYear()}-${(selectedMonth.getMonth() + 1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
-          const dayTasks = tasks.filter(t => t.fecha_vencimiento === dateStr);
-          
-          return (
-            <div key={day} className={cn(
-              "h-20 lg:h-24 p-1.5 border border-slate-100 rounded-xl flex flex-col gap-1 overflow-hidden transition-colors hover:border-blue-200",
-              dayTasks.length > 0 ? "bg-blue-50/20" : "bg-white"
-            )}>
-              <span className="text-[10px] font-bold text-slate-400">{day}</span>
-              <div className="flex flex-col gap-1">
-                {dayTasks.map((dt, idx) => (
-                  <div key={idx} className="bg-blue-600 text-[8px] text-white px-1 py-0.5 rounded truncate font-bold" title={dt.titulo}>
-                    {dt.titulo}
+
+      <AnimatePresence>
+        {selectedDayTasks && (
+          <motion.div 
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="bg-white p-6 rounded-[32px] border border-blue-100 shadow-xl shadow-blue-50/50">
+              <div className="flex justify-between items-center mb-6">
+                <div>
+                   <h4 className="font-black text-slate-800 tracking-tight flex items-center gap-2">
+                     <ClipboardList className="w-5 h-5 text-blue-500" />
+                     Tareas del {new Date(selectedDayTasks.date + 'T12:00:00').toLocaleDateString('es-AR', { day: 'numeric', month: 'long' })}
+                   </h4>
+                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{selectedDayTasks.tasks.length} {selectedDayTasks.tasks.length === 1 ? 'tarea' : 'tareas'} programadas</p>
+                </div>
+                <button 
+                  onClick={() => setSelectedDayTasks(null)}
+                  className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-400 rounded-full transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {selectedDayTasks.tasks.map((task) => (
+                  <div key={task.id} className="p-4 bg-slate-50 border border-slate-100 rounded-2xl hover:border-blue-200 transition-colors group">
+                    <div className="flex justify-between items-start mb-2">
+                      <h5 className="text-sm font-bold text-slate-800 group-hover:text-blue-600 transition-colors">{task.titulo}</h5>
+                      <span className="text-[8px] font-black uppercase text-slate-400 bg-white border border-slate-100 px-2 py-0.5 rounded-lg">{task.frecuencia}</span>
+                    </div>
+                    {task.descripcion && <p className="text-[11px] text-slate-500 mb-3 line-clamp-2 italic">"{task.descripcion}"</p>}
+                    <div className="flex items-center gap-2 mt-auto pt-3 border-t border-slate-200/50">
+                      <UserCircle className="w-4 h-4 text-slate-400" />
+                      <div className="flex flex-wrap gap-1">
+                        {task.asignados && task.asignados.length > 0 ? (
+                          task.asignados.map((as: string, idx: number) => (
+                            <span key={idx} className="text-[9px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">{as}</span>
+                          ))
+                        ) : (
+                          <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md">Todos los operarios</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
-          );
-        })}
-      </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -3388,8 +4034,240 @@ function OperarioStatusGrid({ operarios, registros }: { operarios: any[], regist
   );
 }
 
-function SupervisorDashboard({ user, onLogout }: { user: Operario, onLogout: () => void }) {
-  const [tab, setTab] = useState<'dashboard' | 'tareas' | 'reportes' | 'stock' | 'turnos' | 'incidencias' | 'anuncios' | 'chat'>('dashboard');
+function UserProfile({ user, onUpdate }: { user: Operario, onUpdate: (u: Operario) => void }) {
+  const [nombre, setNombre] = useState(user.nombre);
+  const [usuario, setUsuario] = useState(user.usuario || '');
+  const [email, setEmail] = useState(user.email || '');
+  const [pin, setPin] = useState(user.pin || '');
+  const [whatsapp, setWhatsapp] = useState(user.whatsapp || '');
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState({ text: '', type: '' });
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!whatsapp.trim()) {
+      setMsg({ text: 'El número de WhatsApp es obligatorio', type: 'error' });
+      return;
+    }
+
+    setLoading(true);
+    setMsg({ text: '', type: '' });
+    try {
+      const userRef = doc(db, 'users', user.id!);
+      const updates = {
+        nombre,
+        usuario: usuario.toUpperCase(),
+        email,
+        pin,
+        whatsapp
+      };
+      await updateDoc(userRef, updates);
+      onUpdate({ ...user, ...updates });
+      setMsg({ text: 'Perfil actualizado con éxito', type: 'success' });
+    } catch (err: any) {
+      setMsg({ text: 'Error: ' + err.message, type: 'error' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="bg-white p-6 rounded-[32px] border border-slate-200 shadow-sm max-w-lg mx-auto"
+    >
+      <h2 className="text-xl font-black text-[#0b3464] mb-6 flex items-center gap-2">
+        <UserCircle className="w-6 h-6" /> Mi Perfil
+      </h2>
+
+      <form onSubmit={handleUpdate} className="space-y-4">
+        {msg.text && (
+          <div className={cn("p-4 rounded-xl text-xs font-bold", msg.type === 'success' ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-600")}>
+            {msg.text}
+          </div>
+        )}
+
+        <div>
+          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Nombre Completo</label>
+          <input 
+            type="text" value={nombre} onChange={e => setNombre(e.target.value)}
+            required
+            className="w-full bg-slate-50 border-2 border-slate-100 focus:border-blue-500 rounded-2xl px-5 py-3 font-bold outline-none"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Usuario</label>
+            <input 
+              type="text" value={usuario} onChange={e => setUsuario(e.target.value)}
+              className="w-full bg-slate-50 border-2 border-slate-100 focus:border-blue-500 rounded-2xl px-5 py-3 font-bold outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">WhatsApp (549...)</label>
+            <input 
+              type="tel" value={whatsapp} onChange={e => setWhatsapp(e.target.value)}
+              placeholder="Ej: 5493816543210"
+              required
+              title="Formato: Código de país + código de área + número (sin 0 ni 15)"
+              className="w-full bg-slate-50 border-2 border-slate-100 focus:border-blue-500 rounded-2xl px-5 py-3 font-bold outline-none"
+            />
+            <p className="text-[8px] text-slate-400 mt-1 ml-1 leading-tight">Sin "+" ni espacios. Indispensable para alertas.</p>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Email</label>
+          <div className="relative">
+            <input 
+              type="email" value={email} onChange={e => setEmail(e.target.value)}
+              disabled={!!user.email && user.email.includes('@')}
+              className="w-full bg-slate-100 border-2 border-slate-100 rounded-2xl px-5 py-3 font-bold outline-none opacity-60"
+            />
+            {user.email && <ShieldCheck className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500" />}
+          </div>
+          <p className="text-[9px] text-slate-400 mt-1 ml-1 uppercase font-bold tracking-tight">* Autenticación vinculada</p>
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">PIN / Contraseña</label>
+          <input 
+            type="text" value={pin} onChange={e => setPin(e.target.value)}
+            className="w-full bg-slate-50 border-2 border-slate-100 focus:border-blue-500 rounded-2xl px-5 py-3 font-bold outline-none text-center text-xl tracking-widest font-mono"
+          />
+        </div>
+
+        <button 
+          type="submit" disabled={loading}
+          className="w-full bg-[#0b3464] text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-blue-900/10 active:scale-95 transition-all mt-4"
+        >
+          {loading ? <RefreshCcw className="w-6 h-6 animate-spin mx-auto text-white/50" /> : 'Guardar Cambios'}
+        </button>
+      </form>
+    </motion.div>
+  );
+}
+
+function PersonalManagement() {
+  const [users, setUsers] = useState<Operario[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const q = query(collection(db, 'users'), orderBy('nombre', 'asc'));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setUsers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Operario)));
+      setLoading(false);
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'users');
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const toggleRole = async (user: Operario) => {
+    if (!user.id) return;
+    const userRef = doc(db, 'users', user.id);
+    const nextRole = user.rol === 'supervisor' ? 'operario' : 'supervisor';
+    try {
+      await updateDoc(userRef, { rol: nextRole });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const toggleActive = async (user: Operario) => {
+    if (!user.id) return;
+    const userRef = doc(db, 'users', user.id);
+    try {
+      await updateDoc(userRef, { activo: !user.activo });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-black text-slate-800">Módulo de Personal</h2>
+        <div className="flex bg-white px-4 py-2 rounded-xl border border-slate-200">
+           <span className="text-sm font-bold text-slate-500">Total: {users.length}</span>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-[32px] border border-slate-200 overflow-hidden shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left min-w-[600px]">
+            <thead className="bg-slate-50 border-b border-slate-100">
+              <tr>
+                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Nombre / Usuario</th>
+                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Rol</th>
+                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Estado</th>
+                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {users.map(u => (
+                <tr key={u.id} className="hover:bg-slate-50 transition-colors">
+                  <td className="px-6 py-5">
+                    <div className="flex flex-col">
+                      <span className="text-sm font-bold text-slate-800">{u.nombre}</span>
+                      <span className="text-[10px] font-black text-blue-500 tracking-wider uppercase">@{u.usuario || 'SIN_USUARIO'}</span>
+                    </div>
+                  </td>
+                  <td className="px-6 py-5">
+                    <span className={cn(
+                      "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                      u.rol === 'supervisor' ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"
+                    )}>
+                      {u.rol}
+                    </span>
+                  </td>
+                  <td className="px-6 py-5">
+                    <span className={cn(
+                      "flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest",
+                      u.activo ? "text-emerald-500" : "text-rose-500"
+                    )}>
+                      <div className={cn("w-2 h-2 rounded-full", u.activo ? "bg-emerald-500 animate-pulse" : "bg-rose-500")} />
+                      {u.activo ? 'Activo' : 'Inactivo'}
+                    </span>
+                  </td>
+                  <td className="px-6 py-5 text-right">
+                     <div className="flex justify-end gap-2">
+                        <button 
+                          onClick={() => toggleRole(u)}
+                          className="p-2 hover:bg-amber-50 text-amber-600 rounded-xl transition-colors"
+                          title="Cambiar Rol"
+                        >
+                           <ShieldAlert className="w-5 h-5" />
+                        </button>
+                        <button 
+                          onClick={() => toggleActive(u)}
+                          className={cn(
+                            "p-2 rounded-xl transition-colors",
+                            u.activo ? "hover:bg-rose-50 text-rose-500" : "hover:bg-emerald-50 text-emerald-500"
+                          )}
+                          title={u.activo ? "Desactivar" : "Activar"}
+                        >
+                           {u.activo ? <X className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
+                        </button>
+                     </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {loading && <div className="p-20 flex justify-center"><RefreshCcw className="w-8 h-8 animate-spin text-slate-200" /></div>}
+        {users.length === 0 && !loading && <div className="p-20 text-center text-slate-400 font-bold tracking-widest uppercase text-xs">No se encontraron usuarios.</div>}
+      </div>
+    </div>
+  );
+}
+
+function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario, onLogout: () => void, onUserUpdate: (u: Operario) => void }) {
+  const [tab, setTab] = useState<'dashboard' | 'tareas' | 'reportes' | 'stock' | 'turnos' | 'incidencias' | 'anuncios' | 'chat' | 'metricas' | 'personal' | 'perfil'>('dashboard');
   const [registros, setRegistros] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -3402,101 +4280,93 @@ function SupervisorDashboard({ user, onLogout }: { user: Operario, onLogout: () 
   const [stock, setStock] = useState<any[]>([]);
 
   const handleLogoutAdmin = () => {
-    if (window.confirm("¿Está seguro que desea cerrar sesión como Supervisor?")) {
-      onLogout();
-    }
+    onLogout();
   };
 
   useEffect(() => {
-    // Real-time subscription for live activity feed
-    const channel = supabase
-      .channel('schema-db-changes')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'Limpieza_Registros',
-        },
-        (payload) => {
-          setRegistros((prev) => {
-            // Avoid duplicates if fetchData also runs
-            if (prev.find(r => r.id === payload.new.id)) return prev;
-            return [payload.new, ...prev].slice(0, 500);
-          });
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'Limpieza_Registros',
-        },
-        (payload) => {
-          setRegistros((prev) => prev.map(r => r.id === payload.new.id ? payload.new : r));
-        }
-      )
-      .subscribe();
+    // Real-time subscription for live activity feed using onSnapshot
+    const q = query(collection(db, 'logs'), orderBy('createdAt', 'desc'), limit(100));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const logs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setRegistros(logs);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'logs');
+    });
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
     async function fetchData() {
       setLoading(true);
       
-      // Basic data needed for dashboard always or specific tabs
+      // Basic data needed for dashboard
       const fetchOps = async () => {
         if (operarios.length === 0) {
-          const { data } = await supabase.from('Limpieza_Personal').select('*');
-          if (data) setOperarios(data);
+          try {
+            const querySnapshot = await getDocs(collection(db, 'users'));
+            const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setOperarios(data);
+          } catch (error) {
+            handleFirestoreError(error, OperationType.LIST, 'users');
+          }
         }
       };
 
       const fetchTasks = async () => {
-        const { data } = await supabase.from('Limpieza_Tareas_Plan').select('*');
-        if (data) setTasks(data);
+        try {
+          const querySnapshot = await getDocs(collection(db, 'tasks'));
+          const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setTasks(data);
+        } catch (error) {
+          handleFirestoreError(error, OperationType.LIST, 'tasks');
+        }
       };
       
       const fetchStock = async () => {
-        const { data } = await supabase.from('Limpieza_Stock').select('*');
-        if (data) setStock(data);
+        try {
+          const querySnapshot = await getDocs(collection(db, 'supplies'));
+          const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setStock(data);
+        } catch (error) {
+          handleFirestoreError(error, OperationType.LIST, 'supplies');
+        }
       };
 
       if (tab === 'reportes' || tab === 'dashboard') {
-        let query = supabase.from('Limpieza_Registros').select('*');
+        let q = query(collection(db, 'logs'), orderBy('inicio', 'desc'));
         
         let startDate = new Date();
         if (reportDateMode === 'vivo') {
           startDate.setHours(startDate.getHours() - 12);
-          query = query.gte('inicio', startDate.toISOString()).order('inicio', { ascending: false }).limit(200);
+          q = query(collection(db, 'logs'), where('inicio', '>=', startDate.toISOString()), orderBy('inicio', 'desc'), limit(200));
         } else if (reportDateMode === 'dia') {
           startDate.setHours(0,0,0,0);
-          startDate.setMinutes(startDate.getMinutes() + startDate.getTimezoneOffset()); // Adjust to local if needed or just use ISO
-          query = query.gte('inicio', startDate.toISOString()).order('inicio', { ascending: false });
+          q = query(collection(db, 'logs'), where('inicio', '>=', startDate.toISOString()), orderBy('inicio', 'desc'));
         } else if (reportDateMode === 'semana') {
           startDate.setDate(startDate.getDate() - 7);
-          query = query.gte('inicio', startDate.toISOString()).order('inicio', { ascending: false });
+          q = query(collection(db, 'logs'), where('inicio', '>=', startDate.toISOString()), orderBy('inicio', 'desc'));
         } else if (reportDateMode === 'mes') {
           startDate.setMonth(startDate.getMonth() - 1);
-          query = query.gte('inicio', startDate.toISOString()).order('inicio', { ascending: false });
+          q = query(collection(db, 'logs'), where('inicio', '>=', startDate.toISOString()), orderBy('inicio', 'desc'));
         }
 
-        const [regRes] = await Promise.all([
-          query,
-          fetchOps(),
-          fetchTasks(),
-          fetchStock()
-        ]);
-        
-        let finalData = regRes.data || [];
-        if (reportUserFilter !== 'Todos') {
-          finalData = finalData.filter(d => d.operario === reportUserFilter);
+        try {
+          const [regSnapshot] = await Promise.all([
+            getDocs(q),
+            fetchOps(),
+            fetchTasks(),
+            fetchStock()
+          ]);
+          
+          let finalData: any[] = regSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          if (reportUserFilter !== 'Todos') {
+            finalData = finalData.filter(d => d.operario === reportUserFilter);
+          }
+          setRegistros(finalData);
+        } catch (error) {
+          handleFirestoreError(error, OperationType.LIST, 'logs');
         }
-        setRegistros(finalData);
       } else {
         await Promise.all([fetchOps(), fetchTasks(), fetchStock()]);
       }
@@ -3543,15 +4413,17 @@ function SupervisorDashboard({ user, onLogout }: { user: Operario, onLogout: () 
             >
               <div className="flex justify-between items-center mb-10">
                 <div className="flex items-center gap-3">
-                  <img 
-                    src="/regenerated_image_1777551940944.png" 
-                    alt="Logo" 
-                    className="w-14 h-14 object-contain"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src = 'https://cdn-icons-png.flaticon.com/512/1048/1048953.png';
-                    }}
-                  />
-                  <span className="font-bold text-xl tracking-tight text-slate-800">Panel Arevalo</span>
+                  <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center border border-slate-100 overflow-hidden p-1">
+                    <img 
+                      src="/logo.png" 
+                      alt="Logo" 
+                      className="w-full h-full object-contain"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = 'https://cdn-icons-png.flaticon.com/512/3649/3649255.png';
+                      }}
+                    />
+                  </div>
+                  <span className="font-bold text-xl tracking-tight text-slate-800">Panel Arévalo</span>
                 </div>
                 <button onClick={() => setMenuOpen(false)} className="p-2 hover:bg-slate-100 rounded-full text-slate-400">
                   <X className="w-6 h-6" />
@@ -3600,6 +4472,16 @@ function SupervisorDashboard({ user, onLogout }: { user: Operario, onLogout: () 
                   <span>Comunicados</span>
                 </button>
                 <button 
+                  onClick={() => { setTab('metricas'); setMenuOpen(false); }}
+                  className={cn(
+                    "flex items-center gap-4 px-5 py-4 rounded-2xl font-bold transition-all",
+                    tab === 'metricas' ? "bg-amber-50 text-amber-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"
+                  )}
+                >
+                  <BarChart2 className="w-6 h-6" />
+                  <span>Productividad</span>
+                </button>
+                <button 
                   onClick={() => { setTab('reportes'); setMenuOpen(false); }}
                   className={cn(
                     "flex items-center gap-4 px-5 py-4 rounded-2xl font-bold transition-all",
@@ -3628,6 +4510,26 @@ function SupervisorDashboard({ user, onLogout }: { user: Operario, onLogout: () 
                 >
                   <Calendar className="w-6 h-6" />
                   <span>Gestión Turnos</span>
+                </button>
+                <button 
+                  onClick={() => { setTab('personal'); setMenuOpen(false); }}
+                  className={cn(
+                    "flex items-center gap-4 px-5 py-4 rounded-2xl font-bold transition-all",
+                    tab === 'personal' ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"
+                  )}
+                >
+                  <Users className="w-6 h-6" />
+                  <span>Personal</span>
+                </button>
+                <button 
+                  onClick={() => { setTab('perfil'); setMenuOpen(false); }}
+                  className={cn(
+                    "flex items-center gap-4 px-5 py-4 rounded-2xl font-bold transition-all",
+                    tab === 'perfil' ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"
+                  )}
+                >
+                  <UserCircle className="w-6 h-6" />
+                  <span>Mi Perfil</span>
                 </button>
                 <button 
                   onClick={() => { setTab('stock'); setMenuOpen(false); }}
@@ -3827,6 +4729,7 @@ function SupervisorDashboard({ user, onLogout }: { user: Operario, onLogout: () 
           </div>
         )}
 
+        {tab === 'metricas' && <SupervisorProductivityStats registros={registros} operarios={operarios} tasks={tasks} />}
         {tab === 'reportes' && (
           <div className="flex flex-col gap-6">
             <JibbleHourReport registros={registros} operarios={operarios} reportDateMode={reportDateMode} setReportDateMode={setReportDateMode} reportUserFilter={reportUserFilter} setReportUserFilter={setReportUserFilter} loading={loading} />
@@ -3845,6 +4748,14 @@ function SupervisorDashboard({ user, onLogout }: { user: Operario, onLogout: () 
 
         {tab === 'stock' && (
           <SupervisorStockManager />
+        )}
+
+        {tab === 'personal' && (
+          <PersonalManagement />
+        )}
+
+        {tab === 'perfil' && (
+          <UserProfile user={user} onUpdate={onUserUpdate} />
         )}
       </div>
     </div>

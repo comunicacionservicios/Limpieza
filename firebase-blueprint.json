@@ -1,0 +1,139 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Professional profile for operarios and supervisors.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "nombre": { "type": "string" },
+        "usuario": { "type": "string" },
+        "pin": { "type": "string" },
+        "email": { "type": "string" },
+        "rol": { "type": "string", "enum": ["operario", "supervisor"] },
+        "especialidad": { "type": "string" },
+        "activo": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "nombre", "rol"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "Definition of a cleaning task.",
+      "type": "object",
+      "properties": {
+        "titulo": { "type": "string" },
+        "frecuencia": { "type": "string" },
+        "descripcion": { "type": "string" },
+        "fecha_vencimiento": { "type": "string" },
+        "requiere_foto": { "type": "boolean" },
+        "asignados": { "type": "array", "items": { "type": "string" } },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["titulo", "frecuencia"]
+    },
+    "Supply": {
+      "title": "Supply",
+      "description": "Inventory management for cleaning supplies.",
+      "type": "object",
+      "properties": {
+        "nombre": { "type": "string" },
+        "stock": { "type": "number" },
+        "unidad": { "type": "string" },
+        "critico": { "type": "boolean" },
+        "imagen": { "type": "string" },
+        "consumoNormal": { "type": "number" }
+      },
+      "required": ["nombre", "stock", "unidad"]
+    },
+    "Incident": {
+      "title": "Incident",
+      "description": "Reported incident or maintenance ticket.",
+      "type": "object",
+      "properties": {
+        "autorId": { "type": "string" },
+        "autorNombre": { "type": "string" },
+        "tipo": { "type": "string", "enum": ["Rotura", "Falta de Insumo", "Urgencia", "Otro"] },
+        "urgencia": { "type": "string", "enum": ["Baja", "Media", "Alta"] },
+        "descripcion": { "type": "string" },
+        "foto": { "type": "string" },
+        "fecha": { "type": "string", "format": "date-time" },
+        "estado": { "type": "string", "enum": ["Abierto", "En Proceso", "Resuelto"] }
+      },
+      "required": ["autorId", "tipo", "descripcion", "fecha", "estado"]
+    },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "Global announcement for all personnel.",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "authorId": { "type": "string" }
+      },
+      "required": ["text", "date", "authorId"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Real-time communication message.",
+      "type": "object",
+      "properties": {
+        "senderId": { "type": "string" },
+        "senderNombre": { "type": "string" },
+        "text": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "isSupervisor": { "type": "boolean" }
+      },
+      "required": ["senderId", "text", "timestamp"]
+    },
+    "LogEntry": {
+      "title": "LogEntry",
+      "description": "Activity log entry for tracking work.",
+      "type": "object",
+      "properties": {
+        "operarioId": { "type": "string" },
+        "operario": { "type": "string" },
+        "accion": { "type": "string" },
+        "fecha": { "type": "string" },
+        "hora": { "type": "string" },
+        "inicio": { "type": "string", "format": "date-time" },
+        "fin": { "type": "string", "format": "date-time" },
+        "duracion_minutos": { "type": "number" },
+        "estado": { "type": "string" },
+        "comentario": { "type": "string" }
+      },
+      "required": ["operarioId", "accion", "fecha"]
+    }
+  },
+  "firestore": {
+    "users": {
+      "schema": "User",
+      "description": "Store profiles of operarios and supervisors."
+    },
+    "tasks": {
+      "schema": "Task",
+      "description": "Planned cleaning tasks."
+    },
+    "supplies": {
+      "schema": "Supply",
+      "description": "Inventory of cleaning supplies."
+    },
+    "incidents": {
+      "schema": "Incident",
+      "description": "Reported operational incidents."
+    },
+    "announcements": {
+      "schema": "Announcement",
+      "description": "Global broadcasts from supervision."
+    },
+    "chat": {
+      "schema": "ChatMessage",
+      "description": "Corporate general chat history."
+    },
+    "logs": {
+      "schema": "LogEntry",
+      "description": "Activity logs for productivity tracking."
+    }
+  }
+}

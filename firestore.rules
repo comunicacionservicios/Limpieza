@@ -1,0 +1,126 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.rol == 'supervisor') ||
+        (request.auth.token.email == 'comunicacionservicios@arevalo.com.ar')
+      );
+    }
+
+    // Entity Validations
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'nombre', 'rol']) && 
+             data.keys().size() >= 3 &&
+             data.uid is string && data.uid.size() <= 128 &&
+             data.nombre is string && data.nombre.size() <= 100 &&
+             data.rol in ['operario', 'supervisor'];
+    }
+
+    function isValidTask(data) {
+      return data.keys().hasAll(['titulo', 'frecuencia']) &&
+             data.titulo is string && data.titulo.size() <= 200 &&
+             data.frecuencia is string && data.frecuencia.size() <= 50 &&
+             (!('asignados' in data) || (data.asignados is list && data.asignados.size() <= 50));
+    }
+
+    function isValidSupply(data) {
+      return data.keys().hasAll(['nombre', 'stock', 'unidad']) &&
+             data.nombre is string && data.nombre.size() <= 100 &&
+             data.stock is number &&
+             data.unidad is string && data.unidad.size() <= 20;
+    }
+
+    function isValidIncident(data) {
+      return data.keys().hasAll(['autorId', 'tipo', 'descripcion', 'fecha', 'estado']) &&
+             data.autorId is string && data.autorId.size() <= 128 &&
+             data.tipo in ['Rotura', 'Falta de Insumo', 'Urgencia', 'Otro'] &&
+             data.descripcion is string && data.descripcion.size() <= 2000 &&
+             data.fecha is string &&
+             data.estado in ['Abierto', 'En Proceso', 'Resuelto'];
+    }
+
+    function isValidLog(data) {
+      return data.keys().hasAll(['operarioId', 'accion', 'fecha']) &&
+             data.operarioId is string && data.operarioId.size() <= 128 &&
+             data.accion is string && data.accion.size() <= 500;
+    }
+
+    function isValidChatMessage(data) {
+      return data.keys().hasAll(['senderId', 'text', 'timestamp']) &&
+             data.senderId is string &&
+             data.text is string && data.text.size() <= 1000;
+    }
+
+    // Rules
+    match /test/connection {
+      allow read: if true;
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isOwner(userId) && isValidId(userId);
+      allow update: if isSignedIn() && (isOwner(userId) || isAdmin()) && isValidId(userId);
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /supplies/{supplyId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /incidents/{incidentId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isAdmin() || (isSignedIn() && isOwner(existing().autorId));
+    }
+
+    match /announcements/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /chat/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+    }
+
+    match /logs/{id} {
+      allow read: if isAdmin() || (isSignedIn() && (resource == null || isOwner(resource.data.operarioId)));
+      allow create: if isSignedIn();
+      allow update: if isAdmin();
+    }
+  }
+}

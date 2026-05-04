@@ -1,0 +1,128 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isEmailVerified() {
+       return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.rol == 'supervisor';
+    }
+
+    // Entity Validations
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'nombre', 'rol']) && 
+             data.keys().size() >= 3 &&
+             data.uid is string && data.uid.size() <= 128 &&
+             data.nombre is string && data.nombre.size() <= 100 &&
+             data.rol in ['operario', 'supervisor'];
+    }
+
+    function isValidTask(data) {
+      return data.keys().hasAll(['titulo', 'frecuencia']) &&
+             data.titulo is string && data.titulo.size() <= 200 &&
+             data.frecuencia is string && data.frecuencia.size() <= 50;
+    }
+
+    function isValidSupply(data) {
+      return data.keys().hasAll(['nombre', 'stock', 'unidad']) &&
+             data.nombre is string && data.nombre.size() <= 100 &&
+             data.stock is number &&
+             data.unidad is string && data.unidad.size() <= 20;
+    }
+
+    function isValidIncident(data) {
+      return data.keys().hasAll(['autorId', 'tipo', 'descripcion', 'fecha', 'estado']) &&
+             data.autorId is string && data.autorId.size() <= 128 &&
+             data.tipo in ['Rotura', 'Falta de Insumo', 'Urgencia', 'Otro'] &&
+             data.descripcion is string && data.descripcion.size() <= 2000 &&
+             data.estado in ['Abierto', 'En Proceso', 'Resuelto'];
+    }
+
+    function isValidLog(data) {
+      return data.keys().hasAll(['operarioId', 'accion', 'fecha']) &&
+             data.operarioId is string && data.operarioId.size() <= 128 &&
+             data.accion is string && data.accion.size() <= 500;
+    }
+
+    function isValidChatMessage(data) {
+      return data.keys().hasAll(['senderId', 'text', 'timestamp']) &&
+             data.senderId is string &&
+             data.text is string && data.text.size() <= 1000;
+    }
+
+    // Rules
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && isOwner(userId) && isValidUser(incoming());
+      allow update: if isSignedIn() && (isOwner(userId) || isAdmin()) && isValidUser(incoming()) && 
+                    incoming().rol == existing().rol; // Prevents privilege escalation
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() && isValidTask(incoming());
+    }
+
+    match /supplies/{supplyId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() && isValidSupply(incoming());
+      allow update: if isSignedIn() && isValidSupply(incoming()) && 
+                    incoming().diff(existing()).affectedKeys().hasOnly(['stock']); // Operarios might update stock? (e.g. usage)
+    }
+
+    match /incidents/{incidentId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidIncident(incoming()) && incoming().autorId == request.auth.uid;
+      allow update: if isSignedIn() && (
+        isAdmin() || 
+        (isOwner(existing().autorId) && incoming().diff(existing()).affectedKeys().hasOnly(['descripcion', 'tipo']))
+      ) && isValidIncident(incoming());
+    }
+
+    match /announcements/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /chat/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidChatMessage(incoming()) && incoming().senderId == request.auth.uid;
+    }
+
+    match /logs/{id} {
+      allow list: if isAdmin();
+      allow get: if isSignedIn() && (isOwner(resource.data.operarioId) || isAdmin());
+      allow create: if isSignedIn() && isValidLog(incoming()) && incoming().operarioId == request.auth.uid;
+      allow update: if isAdmin();
+    }
+  }
+}
