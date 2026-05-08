@@ -2603,7 +2603,6 @@ function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) 
 // -- Login Screen --
 
 function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: string) => void, installProps: any }) {
-  const [loginMethod, setLoginMethod] = useState<'google' | 'pin'>('google');
   const [usuario, setUsuario] = useState('');
   const [pin, setPin] = useState('');
   const [loading, setLoading] = useState(false);
@@ -2873,49 +2872,47 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
           </div>
         </div>
 
-        <div className="flex bg-slate-100 p-1 rounded-2xl mb-6">
-          <button onClick={() => setLoginMethod('google')} className={cn("flex-1 py-4 text-[10px] font-black uppercase rounded-xl transition-all flex items-center justify-center gap-2", loginMethod === 'google' ? "bg-white text-blue-600 shadow-sm" : "text-slate-400")}>
-            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-4 h-4" alt="G" /> Google
-          </button>
-          <button onClick={() => setLoginMethod('pin')} className={cn("flex-1 py-4 text-[10px] font-black uppercase rounded-xl transition-all", loginMethod === 'pin' ? "bg-white text-blue-600 shadow-sm" : "text-slate-400")}>PIN</button>
-        </div>
-
         <div className="flex flex-col gap-4">
           {error && <div className="bg-red-50 text-red-600 text-[10px] p-3 rounded-2xl font-bold border border-red-100 flex items-start gap-2"><ShieldAlert className="w-4 h-4 shrink-0" /><p>{error}</p></div>}
           
-          {loginMethod === 'google' ? (
-            <button 
-              disabled={loading} 
-              onClick={handleGoogleLogin} 
-              className={cn(
-                "w-full py-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 flex items-center justify-center gap-3", 
-                isButtonEnabled ? "bg-[#0b3464] text-white hover:bg-[#0d417a]" : "bg-slate-200 text-slate-400"
-              )}
-            >
-              {loading ? <RefreshCcw className="w-5 h-5 animate-spin" /> : <>Ingresar con Google <MoveRight className="w-4 h-4" /></>}
-            </button>
-          ) : (
-            <form onSubmit={handlePinLogin} className="flex flex-col gap-4">
-              <div className="relative group">
-                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">Usuario</label>
-                <div className="relative">
-                  <UserCircle className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
-                  <input type="text" value={usuario} onChange={e => setUsuario(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-5 py-3.5 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 transition-all" placeholder="USUARIO" />
-                </div>
+          <form onSubmit={handlePinLogin} className="flex flex-col gap-4">
+            <div className="relative group">
+              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">Usuario</label>
+              <div className="relative">
+                <UserCircle className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
+                <input type="text" value={usuario} onChange={e => setUsuario(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-5 py-3.5 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 transition-all" placeholder="USUARIO" />
               </div>
-              <div className="relative group">
-                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">PIN</label>
-                <div className="relative">
-                  <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
-                  <input type="password" value={pin} onChange={e => setPin(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-5 py-3.5 text-center text-xl font-bold tracking-[0.5em] font-mono outline-none focus:border-blue-500 transition-all" placeholder="****" />
-                </div>
+            </div>
+            <div className="relative group">
+              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">PIN</label>
+              <div className="relative">
+                <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
+                <input type="password" value={pin} onChange={e => setPin(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-5 py-3.5 text-center text-xl font-bold tracking-[0.5em] font-mono outline-none focus:border-blue-500 transition-all" placeholder="****" />
               </div>
+            </div>
 
-              <button disabled={loading} type="submit" className={cn("w-full py-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2", isButtonEnabled ? "bg-[#0b3464] text-white hover:bg-[#0d417a]" : "bg-slate-200 text-slate-400")}>
-                {loading ? <RefreshCcw className="w-5 h-5 animate-spin" /> : <>Ingresar <MoveRight className="w-4 h-4" /></>}
-              </button>
-            </form>
-          )}
+            <button disabled={loading} type="submit" className={cn("w-full py-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2", isButtonEnabled ? "bg-[#0b3464] text-white hover:bg-[#0d417a]" : "bg-slate-200 text-slate-400")}>
+              {loading ? <RefreshCcw className="w-5 h-5 animate-spin" /> : <>Ingresar <MoveRight className="w-4 h-4" /></>}
+            </button>
+          </form>
+
+          <div className="flex items-center gap-2 mt-4 mb-2">
+            <div className="h-px bg-slate-100 flex-1"></div>
+            <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest">O con tu cuenta</span>
+            <div className="h-px bg-slate-100 flex-1"></div>
+          </div>
+
+          <button 
+            disabled={loading} 
+            onClick={handleGoogleLogin} 
+            className={cn(
+              "w-full py-4 rounded-2xl font-bold text-sm transition-all border-2 flex items-center justify-center gap-3", 
+              isButtonEnabled ? "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300" : "bg-slate-50 border-slate-100 text-slate-300"
+            )}
+          >
+            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="G" />
+            Ingresar con Google
+          </button>
           
           {(geoStatus !== 'allowed' || notifPermission !== 'granted') && (
             <div className="bg-rose-50 p-4 rounded-3xl border border-rose-100">
