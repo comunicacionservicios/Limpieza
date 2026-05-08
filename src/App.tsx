@@ -20,9 +20,7 @@ import {
 } from 'firebase/firestore';
 import { 
   onAuthStateChanged, 
-  signInWithPopup, 
   signInAnonymously,
-  GoogleAuthProvider, 
   signOut,
   User as FirebaseUser
 } from 'firebase/auth';
@@ -2602,6 +2600,18 @@ function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) 
 
 // -- Login Screen --
 
+const DEFAULT_USERS = [
+  { nombre: 'Abel Supervisor', usuario: 'ABEL', rol: 'supervisor', defaultPin: '1' },
+  { nombre: 'Walter Medina', usuario: 'WALTER', rol: 'supervisor', defaultPin: '1211' },
+  { nombre: 'Claudia', usuario: 'CLAUDIA', rol: 'operario', defaultPin: '1234' },
+  { nombre: 'Angie', usuario: 'ANGIE', rol: 'operario', defaultPin: '1234' },
+  { nombre: 'Florencia', usuario: 'FLORENCIA', rol: 'operario', defaultPin: '1234' },
+  { nombre: 'Mario', usuario: 'MARIO', rol: 'operario', defaultPin: '1234' },
+  { nombre: 'Jose', usuario: 'JOSE', rol: 'operario', defaultPin: '1234' },
+  { nombre: 'Raul', usuario: 'RAUL', rol: 'operario', defaultPin: '1234' },
+  { nombre: 'Nicolas', usuario: 'NICOLAS', rol: 'operario', defaultPin: '1234' },
+];
+
 function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: string) => void, installProps: any }) {
   const [usuario, setUsuario] = useState('');
   const [pin, setPin] = useState('');
@@ -2609,6 +2619,9 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
   const [error, setError] = useState('');
   const [geoStatus, setGeoStatus] = useState<'checking' | 'allowed' | 'denied' | 'outside'>('checking');
   const [userCoords, setUserCoords] = useState<{ lat: number, lng: number } | null>(null);
+
+  const [changingPinFor, setChangingPinFor] = useState<{usuario: string, userData: any} | null>(null);
+  const [newPinFromUser, setNewPinFromUser] = useState('');
 
   const TARGET_LAT = -26.833782; 
   const TARGET_LNG = -65.200598;
@@ -2658,90 +2671,6 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
   // Allow clicking buttons if not loading, validation happens inside handlers
   const isButtonEnabled = !loading;
 
-  const handleGoogleLogin = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
-      const fbUser = result.user;
-      
-      let userData: any = null;
-      let userId: string = fbUser.uid;
-
-      const userRef = doc(db, 'users', fbUser.uid);
-      const userSnap = await getDoc(userRef);
-      
-      if (userSnap.exists()) {
-        userData = userSnap.data();
-      } else {
-        const q = query(collection(db, 'users'), where('email', '==', fbUser.email));
-        const qSnap = await getDocs(q);
-        if (!qSnap.empty) {
-          userData = qSnap.docs[0].data();
-          userId = qSnap.docs[0].id;
-        }
-      }
-
-      if (!userData) {
-        if (fbUser.email?.toLowerCase() === 'comunicacionservicios@arevalo.com.ar') {
-          userData = {
-            nombre: 'Administrador (Arévalo)',
-            rol: 'supervisor',
-            email: fbUser.email,
-          };
-          // Try to create the user doc silently so future checks work smoothly
-          try {
-            await setDoc(userRef, userData, { merge: true });
-          } catch (e) {
-            console.warn("Could not save admin user doc", e);
-          }
-        } else {
-          throw new Error('Cuenta de Google no registrada en el sistema.');
-        }
-      }
-
-      // Check permissions based on role
-      const isSupervisor = userData.rol === 'supervisor';
-      
-      if (!isSupervisor && userData.rol === 'operario') {
-        if (geoStatus !== 'allowed') {
-          throw new Error('Los operarios deben estar en el rango de la empresa para ingresar.');
-        }
-      }
-      
-      // Handle anonymous sign-in for PIN users if not already authenticated
-      if (!auth.currentUser) {
-        try {
-          await signInAnonymously(auth);
-        } catch (e) {
-          console.warn("Anonymous sign-in error:", e);
-        }
-      }
-
-      if (notifPermission !== 'granted' && "Notification" in window) {
-        try {
-          const perm = await Notification.requestPermission();
-          setNotifPermission(perm);
-          // Only block if they explicitly DENIED and app really needs it, 
-          // but for now let's just warn and allow if they are in default state after prompt
-          if (perm === 'denied') {
-             throw new Error('Debe habilitar las notificaciones para ingresar.');
-          }
-        } catch (e: any) {
-          if (e.message.includes('notificaciones')) throw e;
-          console.warn("Notification error:", e);
-        }
-      }
-
-      onLogin({ ...userData, id: userId || fbUser.uid } as any, getArgentinaDate());
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handlePinLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!usuario.trim() || !pin.trim()) return;
@@ -2749,36 +2678,42 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
     setError('');
     try {
       if (!auth.currentUser) await signInAnonymously(auth);
-      const q = query(collection(db, 'users'), where('usuario', '==', usuario.trim().toUpperCase()), where('pin', '==', pin.trim()));
+      const q = query(collection(db, 'users'), where('usuario', '==', usuario.trim().toUpperCase()));
       const querySnapshot = await getDocs(q);
       
       let userData: any = null;
       let userId: string = '';
 
+      const u = usuario.trim().toUpperCase();
+
       if (querySnapshot.empty) {
-        const u = usuario.trim().toUpperCase();
-        if (u === 'WMEDINA' && pin === '1234') {
-          userData = { nombre: 'Walter Medina', usuario: 'WMEDINA', rol: 'supervisor' };
-          userId = 'sv-wmedina';
-        } else if (u === 'ABEL' && pin === '1234') {
-          userData = { nombre: 'Abel Supervisor', usuario: 'ABEL', rol: 'supervisor' };
-          userId = 'sv-abel';
+        // Not in firestore yet, check default users map
+        const defaultUser = DEFAULT_USERS.find(d => d.usuario === u && d.defaultPin === pin.trim());
+        if (defaultUser) {
+          // Success with default pin. Require change.
+          setChangingPinFor({ usuario: u, userData: { nombre: defaultUser.nombre, usuario: defaultUser.usuario, rol: defaultUser.rol } });
+          setLoading(false);
+          return;
         } else {
           throw new Error('Usuario o PIN incorrectos.');
         }
       } else {
-        userData = querySnapshot.docs[0].data();
-        userId = querySnapshot.docs[0].id;
+        // Exists in firestore
+        const fsDoc = querySnapshot.docs[0];
+        const fsData = fsDoc.data();
+        if (fsData.pin !== pin.trim()) {
+          throw new Error('Usuario o PIN incorrectos.');
+        }
+        userData = fsData;
+        userId = fsDoc.id;
       }
 
-      // Try to sync with auth uid
+      // Try to sync with auth uid for rules
       if (auth.currentUser) {
         try {
-          // If they logged in by PIN, we save their anonymous UID doc so Firebase Rules allows them
           await setDoc(doc(db, 'users', auth.currentUser.uid), {
             ...userData,
             uid: auth.currentUser.uid,
-            // Keep the original document ID so we know who they really are if needed
             originalDocId: userId
           }, { merge: true });
         } catch (e) {
@@ -2808,6 +2743,61 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
       }
 
       onLogin({ ...userData, id: userId } as any, getArgentinaDate());
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePinChangeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPinFromUser.trim() || newPinFromUser.length < 4) {
+      setError('El PIN debe tener al menos 4 caracteres.');
+      return;
+    }
+    if (!changingPinFor) return;
+
+    setLoading(true);
+    setError('');
+    try {
+      if (!auth.currentUser) await signInAnonymously(auth);
+      
+      const newUserId = changingPinFor.usuario.toLowerCase();
+      const newUserData = { ...changingPinFor.userData, pin: newPinFromUser.trim() };
+      
+      await setDoc(doc(db, 'users', newUserId), newUserData);
+
+      if (auth.currentUser) {
+        try {
+          await setDoc(doc(db, 'users', auth.currentUser.uid), {
+            ...newUserData,
+            uid: auth.currentUser.uid,
+            originalDocId: newUserId
+          }, { merge: true });
+        } catch (e) {
+          console.warn("Could not sync auth user doc for rules:", e);
+        }
+      }
+
+      // Check permissions based on role
+      const isSupervisor = newUserData.rol === 'supervisor';
+      if (!isSupervisor && newUserData.rol === 'operario') {
+        if (geoStatus !== 'allowed') {
+          throw new Error('Los operarios deben estar en el rango de la empresa para ingresar.');
+        }
+      }
+
+      if (notifPermission !== 'granted' && "Notification" in window) {
+        try {
+          const perm = await Notification.requestPermission();
+          setNotifPermission(perm);
+        } catch (e: any) {
+          console.warn("Notification error:", e);
+        }
+      }
+
+      onLogin({ ...newUserData, id: newUserId } as any, getArgentinaDate());
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -2875,44 +2865,49 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
         <div className="flex flex-col gap-4">
           {error && <div className="bg-red-50 text-red-600 text-[10px] p-3 rounded-2xl font-bold border border-red-100 flex items-start gap-2"><ShieldAlert className="w-4 h-4 shrink-0" /><p>{error}</p></div>}
           
-          <form onSubmit={handlePinLogin} className="flex flex-col gap-4">
-            <div className="relative group">
-              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">Usuario</label>
-              <div className="relative">
-                <UserCircle className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
-                <input type="text" value={usuario} onChange={e => setUsuario(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-5 py-3.5 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 transition-all" placeholder="USUARIO" />
+          {changingPinFor ? (
+            <form onSubmit={handlePinChangeSubmit} className="flex flex-col gap-4">
+              <div className="bg-amber-50 p-4 rounded-3xl border border-amber-100 mb-2">
+                <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest text-center leading-relaxed">
+                  Hola {changingPinFor.userData.nombre},
+                  como es tu primer ingreso, debes cambiar tu PIN por seguridad.
+                </p>
               </div>
-            </div>
-            <div className="relative group">
-              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">PIN</label>
-              <div className="relative">
-                <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
-                <input type="password" value={pin} onChange={e => setPin(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-5 py-3.5 text-center text-xl font-bold tracking-[0.5em] font-mono outline-none focus:border-blue-500 transition-all" placeholder="****" />
+
+              <div className="relative group">
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">NUEVO PIN</label>
+                <div className="relative">
+                  <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
+                  <input type="password" value={newPinFromUser} onChange={e => setNewPinFromUser(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-5 py-3.5 text-center text-xl font-bold tracking-[0.5em] font-mono outline-none focus:border-blue-500 transition-all" placeholder="****" />
+                </div>
               </div>
-            </div>
 
-            <button disabled={loading} type="submit" className={cn("w-full py-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2", isButtonEnabled ? "bg-[#0b3464] text-white hover:bg-[#0d417a]" : "bg-slate-200 text-slate-400")}>
-              {loading ? <RefreshCcw className="w-5 h-5 animate-spin" /> : <>Ingresar <MoveRight className="w-4 h-4" /></>}
-            </button>
-          </form>
+              <button disabled={loading} type="submit" className={cn("w-full py-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2", isButtonEnabled ? "bg-[#0b3464] text-white hover:bg-[#0d417a]" : "bg-slate-200 text-slate-400")}>
+                {loading ? <RefreshCcw className="w-5 h-5 animate-spin" /> : <>Guardar y Entrar <MoveRight className="w-4 h-4" /></>}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handlePinLogin} className="flex flex-col gap-4">
+              <div className="relative group">
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">Usuario</label>
+                <div className="relative">
+                  <UserCircle className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
+                  <input type="text" value={usuario} onChange={e => setUsuario(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-5 py-3.5 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 transition-all" placeholder="USUARIO" />
+                </div>
+              </div>
+              <div className="relative group">
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">PIN</label>
+                <div className="relative">
+                  <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
+                  <input type="password" value={pin} onChange={e => setPin(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-5 py-3.5 text-center text-xl font-bold tracking-[0.5em] font-mono outline-none focus:border-blue-500 transition-all" placeholder="****" />
+                </div>
+              </div>
 
-          <div className="flex items-center gap-2 mt-4 mb-2">
-            <div className="h-px bg-slate-100 flex-1"></div>
-            <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest">O con tu cuenta</span>
-            <div className="h-px bg-slate-100 flex-1"></div>
-          </div>
-
-          <button 
-            disabled={loading} 
-            onClick={handleGoogleLogin} 
-            className={cn(
-              "w-full py-4 rounded-2xl font-bold text-sm transition-all border-2 flex items-center justify-center gap-3", 
-              isButtonEnabled ? "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300" : "bg-slate-50 border-slate-100 text-slate-300"
-            )}
-          >
-            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="G" />
-            Ingresar con Google
-          </button>
+              <button disabled={loading} type="submit" className={cn("w-full py-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2", isButtonEnabled ? "bg-[#0b3464] text-white hover:bg-[#0d417a]" : "bg-slate-200 text-slate-400")}>
+                {loading ? <RefreshCcw className="w-5 h-5 animate-spin" /> : <>Ingresar <MoveRight className="w-4 h-4" /></>}
+              </button>
+            </form>
+          )}
           
           {(geoStatus !== 'allowed' || notifPermission !== 'granted') && (
             <div className="bg-rose-50 p-4 rounded-3xl border border-rose-100">
