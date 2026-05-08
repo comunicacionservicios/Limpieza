@@ -48,7 +48,9 @@ service cloud.firestore {
       return data.keys().hasAll(['titulo', 'frecuencia']) &&
              data.titulo is string && data.titulo.size() <= 200 &&
              data.frecuencia is string && data.frecuencia.size() <= 50 &&
-             (!('asignados' in data) || (data.asignados is list && data.asignados.size() <= 50));
+             (!('asignados' in data) || (data.asignados is list && data.asignados.size() <= 50)) &&
+             (!('lastCompletedDate' in data) || data.lastCompletedDate is string) &&
+             (!('lastCompletedBy' in data) || data.lastCompletedBy is string);
     }
 
     function isValidSupply(data) {
@@ -93,7 +95,11 @@ service cloud.firestore {
 
     match /tasks/{taskId} {
       allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow create, delete: if isAdmin();
+      allow update: if isSignedIn() && isValidTask(incoming()) && (
+        isAdmin() ||
+        incoming().diff(existing()).affectedKeys().hasOnly(['lastCompletedDate', 'lastCompletedBy'])
+      );
     }
 
     match /supplies/{supplyId} {

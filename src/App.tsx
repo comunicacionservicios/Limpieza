@@ -703,7 +703,6 @@ function InsumosModule({ user }: { user: Operario }) {
       alertaConsumo: quantity > normal
     };
 
-    // In a real app, this would be a supabase insert
     const savedRequests = JSON.parse(localStorage.getItem('pending_insumos') || '[]');
     localStorage.setItem('pending_insumos', JSON.stringify([...savedRequests, pedido]));
 
@@ -1070,99 +1069,6 @@ function IncidenciasModule({ user, onReported }: { user: Operario, onReported: (
   );
 }
 
-interface Message {
-  id: string;
-  sender: string;
-  text: string;
-  timestamp: string;
-  isSupervisor?: boolean;
-}
-
-function ChatModule({ user }: { user: Operario }) {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [inputText, setInputText] = useState('');
-
-  useEffect(() => {
-    const q = query(collection(db, 'chat'), orderBy('timestamp', 'asc'), limit(100));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
-      setMessages(msgs);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'chat');
-    });
-    return () => unsubscribe();
-  }, []);
-
-  const sendMessage = async () => {
-    if (!inputText.trim()) return;
-    const newMessage = {
-      senderId: user.id || 'unknown',
-      senderNombre: user.nombre,
-      text: inputText.trim(),
-      timestamp: new Date().toISOString(),
-      isSupervisor: user.rol === 'supervisor'
-    };
-    
-    try {
-      await addDoc(collection(db, 'chat'), newMessage);
-      setInputText('');
-    } catch (error) {
-      console.error("Error sending message:", error);
-      handleFirestoreError(error, OperationType.CREATE, 'chat');
-    }
-  };
-
-  return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col h-full max-h-[500px]">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h3 className="text-lg font-black text-slate-800 tracking-tight leading-none mb-1">Chat Corporativo</h3>
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Comunicación Directa con Supervisión</p>
-        </div>
-      </div>
-      
-      <div className="flex-1 bg-slate-50 rounded-3xl p-4 overflow-y-auto mb-4 space-y-3 min-h-[300px]">
-        {messages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center opacity-30">
-            <Monitor className="w-12 h-12 mb-2" />
-            <p className="text-xs font-bold uppercase tracking-widest">Inicia la conversación</p>
-          </div>
-        ) : (
-          messages.map(m => (
-            <div key={m.id} className={cn(
-              "max-w-[80%] p-3 rounded-2xl text-xs font-medium",
-              m.sender === user.nombre ? "bg-blue-600 text-white ml-auto rounded-br-none" : "bg-white border border-slate-100 text-slate-800 mr-auto rounded-bl-none"
-            )}>
-              <div className="flex justify-between items-center mb-1 gap-4">
-                <span className="font-black text-[9px] uppercase opacity-70 tracking-tighter">{m.sender}</span>
-                <span className="text-[8px] opacity-50">{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-              </div>
-              <p>{m.text}</p>
-            </div>
-          ))
-        )}
-      </div>
-
-      <div className="flex gap-2">
-        <input 
-          type="text" 
-          value={inputText}
-          onKeyDown={e => e.key === 'Enter' && sendMessage()}
-          onChange={e => setInputText(e.target.value)}
-          placeholder="Escribe un mensaje..."
-          className="flex-1 bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm focus:border-blue-500 outline-none"
-        />
-        <button 
-          onClick={sendMessage}
-          className="bg-slate-900 text-white p-3 rounded-2xl shadow-lg active:scale-95 transition-transform"
-        >
-          <MoveRight className="w-6 h-6" />
-        </button>
-      </div>
-    </motion.div>
-  );
-}
-
 function TareaActiva({ 
   tarea, 
   onFinish, 
@@ -1499,12 +1405,34 @@ export default function App() {
     performGlobalLogout();
   };
 
+  // If we have a user from sticky state but no firebase user yet
+  if (user && !firebaseUser && !authLoading) {
+    // If they lost their Firebase session but kept localStorage, we MUST re-authenticate
+    // to prevent "Missing or insufficient permissions"
+    if (user.rol === 'operario' || user.id?.startsWith('sv-') || user.id?.length < 20) {
+      signInAnonymously(auth).catch(e => console.warn(e));
+      return (
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-12 h-12 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin"></div>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest animate-pulse">Restaurando sesión...</p>
+          </div>
+        </div>
+      );
+    } else {
+      // Must be a Google user that lost session, they need to manually re-login
+      performGlobalLogout();
+      return null;
+    }
+  }
+
+  // Also block rendering if still loading
   if (authLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest animate-pulse">Iniciando Sistema...</p>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest animate-pulse">Cargando...</p>
         </div>
       </div>
     );
@@ -1519,21 +1447,6 @@ export default function App() {
     );
   }
 
-  // If we have a user from sticky state but no firebase user yet, 
-  // and it's a firebase-based ID, we might be loading.
-  // But for PIN users, firebaseUser will be null until we sign in anonymously.
-  if (!firebaseUser && user.id && user.id.length > 20 && authLoading) {
-    // This is for Google users who are still loading auth
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest animate-pulse">Sincronizando...</p>
-        </div>
-      </div>
-    );
-  }
-
   if (user.rol === 'supervisor') {
     return (
       <>
@@ -1544,9 +1457,9 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 flex items-center justify-center w-full font-sans text-slate-800">
+    <div className="min-h-screen bg-slate-100 flex items-start justify-center w-full font-sans text-slate-800">
       <InstallBanner installProps={installProps} />
-      <div className="w-full max-w-[375px] bg-white min-h-screen md:min-h-[720px] md:h-[720px] md:rounded-[40px] md:shadow-2xl md:border-[8px] md:border-slate-900 overflow-hidden relative flex flex-col pb-8">
+      <div className="w-full bg-white min-h-screen shadow-sm overflow-hidden relative flex flex-col pb-8">
         
         {/* SIDE MENU OVERLAY */}
         <AnimatePresence>
@@ -1576,7 +1489,7 @@ export default function App() {
                         (e.target as HTMLImageElement).src = 'https://cdn-icons-png.flaticon.com/512/1048/1048953.png';
                       }}
                     />
-                    <span className="font-bold text-lg tracking-tight">Limpieza Arévalo</span>
+                    <span className="font-bold text-lg tracking-tight text-brand-blue">Limpieza Arévalo</span>
                   </div>
                   <button onClick={() => setMenuOpen(false)} className="p-2 hover:bg-slate-100 rounded-full text-slate-400">
                     <X className="w-6 h-6" />
@@ -1586,11 +1499,7 @@ export default function App() {
                 <nav className="flex-1 overflow-y-auto pr-2 flex flex-col gap-1">
                   {[
                     { id: 'tareas', icon: Home, label: 'Inicio' },
-                    { id: 'horarios', icon: Calendar, label: 'Mis Horarios' },
-                    { id: 'insumos', icon: Package, label: 'Insumos' },
                     { id: 'incidencias', icon: AlertTriangle, label: 'Incidencias' },
-                    { id: 'capacitacion', icon: ShieldCheck, label: 'Capacitación' },
-                    { id: 'rrhh', icon: FileText, label: 'RRHH' },
                     { id: 'perfil', icon: UserCircle, label: 'Mi Perfil' },
                   ].map((item) => (
                     <button
@@ -1633,11 +1542,11 @@ export default function App() {
         </AnimatePresence>
 
         {/* HEADER */}
-        <header className="bg-white text-slate-900 px-6 py-4 flex justify-between items-center z-50 relative border-b border-slate-50">
+        <header className="bg-brand-blue text-white px-6 py-4 flex justify-between items-center z-50 relative border-b border-white/10">
           <div className="flex items-center gap-1">
             <button 
               onClick={() => setMenuOpen(true)}
-              className="p-2 -ml-2 text-slate-500 hover:bg-slate-50 rounded-xl transition-colors"
+              className="p-2 -ml-2 text-white hover:bg-white/10 rounded-xl transition-colors"
             >
               <Menu className="w-6 h-6" />
             </button>
@@ -1645,11 +1554,11 @@ export default function App() {
             <div className="relative">
               <button 
                 onClick={() => setShowNotifications(!showNotifications)}
-                className="p-2 bg-white rounded-xl text-slate-400 hover:text-blue-500 relative transition-colors hover:bg-slate-50"
+                className="p-2 bg-transparent rounded-xl text-white hover:text-blue-200 relative transition-colors hover:bg-white/10"
               >
                 <Bell className="w-6 h-6" />
                 {notificationsCount > 0 && (
-                  <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-rose-500 border-2 border-white rounded-full"></span>
+                  <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-rose-500 border-2 border-transparent rounded-full"></span>
                 )}
               </button>
 
@@ -1681,18 +1590,7 @@ export default function App() {
 
           <div className="flex items-center gap-3 text-right">
             <div>
-              <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold leading-none mb-1">{user.rol}</p>
-              <h2 className="text-sm font-bold text-slate-800 leading-tight truncate max-w-[120px]">{user.nombre}</h2>
-            </div>
-            <div className="w-10 h-10 rounded-xl overflow-hidden border border-blue-100 bg-white flex items-center justify-center p-1">
-              <img 
-                src="/logo.png" 
-                alt="User" 
-                className="w-full h-full object-contain"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = 'https://cdn-icons-png.flaticon.com/512/1048/1048953.png';
-                }}
-              />
+              <h2 className="text-sm font-bold text-white leading-tight truncate max-w-[120px]">{user.nombre}</h2>
             </div>
           </div>
         </header>
@@ -1919,6 +1817,16 @@ function Dashboard({
   const handleFinishTask = async () => {
     if (activeTask && taskStart) {
       await recordTime(`Tarea: ${activeTask.titulo}`, taskStart, taskComment);
+      
+      try {
+        await updateDoc(doc(db, 'tasks', activeTask.id), {
+          lastCompletedDate: new Date().toISOString(),
+          lastCompletedBy: user?.nombre || 'Operario'
+        });
+      } catch (e) {
+        console.warn("Could not update task completion status", e);
+      }
+
       setActiveTask(null);
       setTaskStart(null);
       setTaskComment('');
@@ -2146,33 +2054,11 @@ function Dashboard({
           </section>
         )}
 
-        {activeTab === 'horarios' && (
-          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 pb-10">
-            <h3 className="text-lg font-black text-slate-800 tracking-tight mb-4">Mis Próximos Turnos</h3>
-            {[
-              { dia: 'Mañana', loc: 'Oficinas Arevalo', h: '08:00 - 12:00' },
-              { dia: 'Lunes 12', loc: 'Deposito Puerto', h: '14:00 - 20:00' },
-            ].map((t, i) => (
-              <div key={i} className="p-4 bg-white border border-slate-100 rounded-2xl flex justify-between items-center shadow-sm">
-                <div>
-                   <p className="text-xs font-black text-blue-500 uppercase tracking-widest">{t.dia}</p>
-                   <p className="text-sm font-bold text-slate-800">{t.loc}</p>
-                </div>
-                <p className="text-xs font-black text-slate-400">{t.h}</p>
-              </div>
-            ))}
-          </motion.div>
-        )}
-
         {activeTab === 'perfil' && <UserProfile user={user} onUpdate={onUserUpdate} />}
         
-        {activeTab === 'insumos' && <InsumosModule user={user} />}
-        {activeTab === 'capacitacion' && <CapacitacionModule />}
-        {activeTab === 'rrhh' && <RRHHModule />}
             {activeTab === 'incidencias' && (
               <div className="flex flex-col gap-6">
                 <IncidenciasModule user={user} onReported={() => setActiveTab('tareas')} />
-                <ChatModule user={user} />
               </div>
             )}
 
@@ -2359,10 +2245,47 @@ function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) 
     fetchTasks(nextPage);
   };
 
-  const filteredTasks = tasks.filter((t: any) => 
-    t.titulo.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    (t.descripcion || '').toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredTasks = tasks.filter((t: any) => {
+    // Text filter
+    if (searchTerm && !(
+      t.titulo.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      (t.descripcion || '').toLowerCase().includes(searchTerm.toLowerCase())
+    )) {
+      return false;
+    }
+
+    // Completion status filter
+    if (t.lastCompletedDate) {
+      const completedAt = new Date(t.lastCompletedDate);
+      const now = new Date();
+      
+      if (t.frecuencia === 'Diaria') {
+        if (completedAt.toDateString() === now.toDateString()) {
+          return false; // Completed today
+        }
+      } else if (t.frecuencia === 'Semanal') {
+        const diffTime = Math.abs(now.getTime() - completedAt.getTime());
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        // Simple 7-day week window (alternatively align with Monday)
+        if (diffDays <= 7 && now.getDay() >= completedAt.getDay() && now.getTime() - completedAt.getTime() < 7 * 24 * 60 * 60 * 1000) {
+           return false; // Very rough "this week" check
+        }
+        // More precise: check if they are in the same ISO week or if they are less than 7 days ago 
+        // For simplicity, let's say "within last 7 days" OR "same week"
+        const startOfWeek = new Date(now);
+        startOfWeek.setDate(now.getDate() - now.getDay());
+        startOfWeek.setHours(0,0,0,0);
+        if (completedAt >= startOfWeek) return false;
+
+      } else if (t.frecuencia === 'Mensual') {
+        if (completedAt.getMonth() === now.getMonth() && completedAt.getFullYear() === now.getFullYear()) {
+          return false; // Completed this month
+        }
+      }
+    }
+
+    return true;
+  });
 
   const filters: Array<'Diaria' | 'Semanal' | 'Mensual' | 'Eventual'> = ['Diaria', 'Semanal', 'Mensual', 'Eventual'];
 
@@ -2762,7 +2685,21 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
       }
 
       if (!userData) {
-        throw new Error('Cuenta de Google no registrada en el sistema.');
+        if (fbUser.email?.toLowerCase() === 'comunicacionservicios@arevalo.com.ar') {
+          userData = {
+            nombre: 'Administrador (Arévalo)',
+            rol: 'supervisor',
+            email: fbUser.email,
+          };
+          // Try to create the user doc silently so future checks work smoothly
+          try {
+            await setDoc(userRef, userData, { merge: true });
+          } catch (e) {
+            console.warn("Could not save admin user doc", e);
+          }
+        } else {
+          throw new Error('Cuenta de Google no registrada en el sistema.');
+        }
       }
 
       // Check permissions based on role
@@ -2835,6 +2772,21 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
         userId = querySnapshot.docs[0].id;
       }
 
+      // Try to sync with auth uid
+      if (auth.currentUser) {
+        try {
+          // If they logged in by PIN, we save their anonymous UID doc so Firebase Rules allows them
+          await setDoc(doc(db, 'users', auth.currentUser.uid), {
+            ...userData,
+            uid: auth.currentUser.uid,
+            // Keep the original document ID so we know who they really are if needed
+            originalDocId: userId
+          }, { merge: true });
+        } catch (e) {
+          console.warn("Could not sync auth user doc for rules:", e);
+        }
+      }
+
       // Check permissions based on role
       const isSupervisor = userData.rol === 'supervisor';
       if (!isSupervisor && userData.rol === 'operario') {
@@ -2901,7 +2853,7 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
             <div className="flex justify-center">
               {geoStatus === 'checking' && <div className="text-blue-500 font-bold text-[9px] uppercase tracking-widest bg-blue-50 px-3 py-1 rounded-full animate-pulse">Verificando GPS...</div>}
               {geoStatus === 'allowed' && <div className="text-emerald-600 font-bold text-[9px] uppercase tracking-widest bg-emerald-50 px-3 py-1 rounded-full flex items-center gap-1"><MapPin className="w-3 h-3" /> GPS en Rango</div>}
-              {geoStatus === 'outside' && <div className="text-rose-600 font-bold text-[9px] uppercase tracking-widest bg-rose-50 px-3 py-1 rounded-full flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Fuera de Zona</div>}
+              {geoStatus === 'outside' && <div className="text-rose-600 font-bold text-[9px] uppercase tracking-widest bg-rose-50 px-3 py-1 rounded-full flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Fuera de Zona</div>}
               {geoStatus === 'denied' && <div className="text-rose-600 font-bold text-[9px] uppercase tracking-widest bg-rose-50 px-3 py-1 rounded-full flex items-center gap-1"><ShieldAlert className="w-3 h-3" /> GPS Requerido</div>}
             </div>
 
@@ -3253,10 +3205,34 @@ function SupervisorTasksManager() {
       const tasksData = tasksRes.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       const usersData = usersRes.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         
-      const mappedData = tasksData.map((t: any) => ({
-        ...t,
-        _estadoSimulado: Math.random() > 0.5 ? 'Pendiente' : 'Completada'
-      }));
+      const mappedData = tasksData.map((t: any) => {
+        let isCompletedToday = false;
+        if (t.lastCompletedDate) {
+          const completedAt = new Date(t.lastCompletedDate);
+          const now = new Date();
+          
+          if (t.frecuencia === 'Diaria' && completedAt.toDateString() === now.toDateString()) {
+            isCompletedToday = true;
+          } else if (t.frecuencia === 'Semanal') {
+            const startOfWeek = new Date(now);
+            startOfWeek.setDate(now.getDate() - now.getDay());
+            startOfWeek.setHours(0,0,0,0);
+            if (completedAt >= startOfWeek) isCompletedToday = true;
+          } else if (t.frecuencia === 'Mensual') {
+            if (completedAt.getMonth() === now.getMonth() && completedAt.getFullYear() === now.getFullYear()) {
+              isCompletedToday = true;
+            }
+          } else if (t.frecuencia === 'Eventual') {
+             // Eventual task is just completed or not
+             isCompletedToday = true; 
+          }
+        }
+
+        return {
+          ...t,
+          _estadoSimulado: isCompletedToday ? 'Completada' : 'Pendiente'
+        };
+      });
       
       if (isInitial) {
         setTasks(mappedData);
@@ -4039,14 +4015,17 @@ function UserProfile({ user, onUpdate }: { user: Operario, onUpdate: (u: Operari
   const [usuario, setUsuario] = useState(user.usuario || '');
   const [email, setEmail] = useState(user.email || '');
   const [pin, setPin] = useState(user.pin || '');
-  const [whatsapp, setWhatsapp] = useState(user.whatsapp || '');
+  const [whatsapp, setWhatsapp] = useState(user.whatsapp ? user.whatsapp.replace(/^549/, '') : '');
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState({ text: '', type: '' });
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!whatsapp.trim()) {
+    // Clean spaces and ensure only digits
+    const cleanNumber = whatsapp.replace(/\D/g, '');
+    
+    if (!cleanNumber.trim()) {
       setMsg({ text: 'El número de WhatsApp es obligatorio', type: 'error' });
       return;
     }
@@ -4055,12 +4034,13 @@ function UserProfile({ user, onUpdate }: { user: Operario, onUpdate: (u: Operari
     setMsg({ text: '', type: '' });
     try {
       const userRef = doc(db, 'users', user.id!);
+      const fullWhatsapp = '549' + cleanNumber;
       const updates = {
         nombre,
         usuario: usuario.toUpperCase(),
         email,
         pin,
-        whatsapp
+        whatsapp: fullWhatsapp
       };
       await updateDoc(userRef, updates);
       onUpdate({ ...user, ...updates });
@@ -4076,7 +4056,7 @@ function UserProfile({ user, onUpdate }: { user: Operario, onUpdate: (u: Operari
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-white p-6 rounded-[32px] border border-slate-200 shadow-sm max-w-lg mx-auto"
+      className="bg-white p-6 rounded-[32px] border border-slate-200 shadow-sm w-full mx-auto"
     >
       <h2 className="text-xl font-black text-[#0b3464] mb-6 flex items-center gap-2">
         <UserCircle className="w-6 h-6" /> Mi Perfil
@@ -4098,25 +4078,12 @@ function UserProfile({ user, onUpdate }: { user: Operario, onUpdate: (u: Operari
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Usuario</label>
-            <input 
-              type="text" value={usuario} onChange={e => setUsuario(e.target.value)}
-              className="w-full bg-slate-50 border-2 border-slate-100 focus:border-blue-500 rounded-2xl px-5 py-3 font-bold outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">WhatsApp (549...)</label>
-            <input 
-              type="tel" value={whatsapp} onChange={e => setWhatsapp(e.target.value)}
-              placeholder="Ej: 5493816543210"
-              required
-              title="Formato: Código de país + código de área + número (sin 0 ni 15)"
-              className="w-full bg-slate-50 border-2 border-slate-100 focus:border-blue-500 rounded-2xl px-5 py-3 font-bold outline-none"
-            />
-            <p className="text-[8px] text-slate-400 mt-1 ml-1 leading-tight">Sin "+" ni espacios. Indispensable para alertas.</p>
-          </div>
+        <div>
+          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Usuario</label>
+          <input 
+            type="text" value={usuario} onChange={e => setUsuario(e.target.value)}
+            className="w-full bg-slate-50 border-2 border-slate-100 focus:border-blue-500 rounded-2xl px-5 py-3 font-bold outline-none"
+          />
         </div>
 
         <div>
@@ -4130,6 +4097,27 @@ function UserProfile({ user, onUpdate }: { user: Operario, onUpdate: (u: Operari
             {user.email && <ShieldCheck className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500" />}
           </div>
           <p className="text-[9px] text-slate-400 mt-1 ml-1 uppercase font-bold tracking-tight">* Autenticación vinculada</p>
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">WhatsApp (Argentina)</label>
+          <div className="flex bg-slate-50 border-2 border-slate-100 focus-within:border-blue-500 rounded-2xl overflow-hidden transition-colors">
+            <div className="bg-slate-100/50 px-4 py-3 font-black text-slate-400 border-r border-slate-100 flex items-center shrink-0 text-xs">
+              +54 9
+            </div>
+            <input 
+              type="tel" 
+              value={whatsapp} 
+              onChange={e => {
+                const val = e.target.value.replace(/\D/g, ''); // Keep only numbers
+                setWhatsapp(val);
+              }}
+              placeholder="Ej: 3815025897"
+              required
+              className="flex-1 bg-transparent px-5 py-3 font-bold outline-none"
+            />
+          </div>
+          <p className="text-[8px] text-slate-400 mt-1 ml-1 leading-tight">Ingresa el código de área + número sin 0 ni 15. Indispensable para alertas.</p>
         </div>
 
         <div>
@@ -4267,7 +4255,7 @@ function PersonalManagement() {
 }
 
 function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario, onLogout: () => void, onUserUpdate: (u: Operario) => void }) {
-  const [tab, setTab] = useState<'dashboard' | 'tareas' | 'reportes' | 'stock' | 'turnos' | 'incidencias' | 'anuncios' | 'chat' | 'metricas' | 'personal' | 'perfil'>('dashboard');
+  const [tab, setTab] = useState<'dashboard' | 'tareas' | 'reportes' | 'stock' | 'turnos' | 'incidencias' | 'anuncios' | 'metricas' | 'personal' | 'perfil'>('dashboard');
   const [registros, setRegistros] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -4423,7 +4411,7 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
                       }}
                     />
                   </div>
-                  <span className="font-bold text-xl tracking-tight text-slate-800">Panel Arévalo</span>
+                  <span className="font-bold text-xl tracking-tight text-brand-blue">Panel Arévalo</span>
                 </div>
                 <button onClick={() => setMenuOpen(false)} className="p-2 hover:bg-slate-100 rounded-full text-slate-400">
                   <X className="w-6 h-6" />
@@ -4451,16 +4439,7 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
                   <AlertTriangle className="w-6 h-6" />
                   <span>Incidencias / Tickets</span>
                 </button>
-                <button 
-                  onClick={() => { setTab('chat'); setMenuOpen(false); }}
-                  className={cn(
-                    "flex items-center gap-4 px-5 py-4 rounded-2xl font-bold transition-all",
-                    tab === 'chat' ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"
-                  )}
-                >
-                  <Monitor className="w-6 h-6" />
-                  <span>Chat Operativo</span>
-                </button>
+
                 <button 
                   onClick={() => { setTab('anuncios'); setMenuOpen(false); }}
                   className={cn(
@@ -4569,35 +4548,23 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
         )}
       </AnimatePresence>
 
-      <header className="bg-white text-slate-900 px-6 py-4 flex justify-between items-center z-50 sticky top-0 shadow-sm border-b border-slate-200">
+      <header className="bg-brand-blue text-white px-6 py-4 flex justify-between items-center z-50 sticky top-0 shadow-sm border-b border-white/10">
         <div className="flex items-center gap-2">
           <button 
             onClick={() => setMenuOpen(true)}
-            className="p-2.5 bg-slate-50 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-2xl transition-all border border-slate-100"
+            className="p-2.5 bg-white/10 text-white hover:text-blue-100 hover:bg-white/20 rounded-2xl transition-all border border-white/5"
           >
             <Menu className="w-6 h-6" />
           </button>
-          <div className="hidden sm:flex items-center gap-3 ml-2">
-            <img 
-              src="/regenerated_image_1777551940944.png" 
-              alt="Logo" 
-              className="w-12 h-12 object-contain"
-              onError={(e) => {
-                (e.target as HTMLImageElement).src = 'https://cdn-icons-png.flaticon.com/512/1048/1048953.png';
-              }}
-            />
-            <h1 className="font-black text-xl tracking-tighter text-slate-900">Limpieza<span className="text-blue-600 underline decoration-4 decoration-blue-100 underline-offset-4">Arevalo</span></h1>
-          </div>
         </div>
 
         <div className="flex items-center gap-3 text-right">
           <div className="hidden xs:block">
-            <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold leading-none mb-1">{user.rol}</p>
-            <h2 className="text-sm font-bold text-slate-800 leading-tight truncate max-w-[150px]">{user.nombre}</h2>
+            <h2 className="text-sm font-bold text-white leading-tight truncate max-w-[150px]">{user.nombre}</h2>
           </div>
           <button 
             onClick={handleLogoutAdmin}
-            className="bg-rose-50 p-2 rounded-2xl border border-rose-100 text-rose-600 hover:bg-rose-100 transition-colors"
+            className="bg-transparent p-2 rounded-2xl border border-transparent text-white hover:bg-white/10 transition-colors"
             title="Cerrar Sesión"
           >
             <LogOut className="w-6 h-6" />
@@ -4723,12 +4690,6 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
 
         {tab === 'incidencias' && <SupervisorIncidentsLog />}
         {tab === 'anuncios' && <SupervisorAnnouncements />}
-        {tab === 'chat' && (
-          <div className="max-w-2xl mx-auto w-full bg-white p-8 rounded-[32px] border border-slate-200 shadow-sm h-full max-h-[700px]">
-            <ChatModule user={user} />
-          </div>
-        )}
-
         {tab === 'metricas' && <SupervisorProductivityStats registros={registros} operarios={operarios} tasks={tasks} />}
         {tab === 'reportes' && (
           <div className="flex flex-col gap-6">
