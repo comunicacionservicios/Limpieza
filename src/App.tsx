@@ -1403,12 +1403,39 @@ export default function App() {
     performGlobalLogout();
   };
 
+  const [reauthError, setReauthError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // If we have a user from sticky state but no firebase user yet and not loading auth
+    if (user && !firebaseUser && !authLoading) {
+      if (user.rol === 'operario' || user.id?.startsWith('sv-') || user.id?.length < 20) {
+        signInAnonymously(auth).catch(e => {
+          console.warn("Re-auth failed:", e);
+          if (e.code === 'auth/admin-restricted-operation') {
+            setReauthError('CONFIGURACIÓN REQUERIDA: Debes activar el proveedor de acceso "Anónimo" en la consola de Firebase > Authentication > Sign-in method.');
+          } else {
+            setReauthError('Error de autenticación. Verifica tu conexión a internet.');
+          }
+        });
+      }
+    }
+  }, [user, firebaseUser, authLoading]);
+
   // If we have a user from sticky state but no firebase user yet
   if (user && !firebaseUser && !authLoading) {
-    // If they lost their Firebase session but kept localStorage, we MUST re-authenticate
-    // to prevent "Missing or insufficient permissions"
     if (user.rol === 'operario' || user.id?.startsWith('sv-') || user.id?.length < 20) {
-      signInAnonymously(auth).catch(e => console.warn(e));
+      if (reauthError) {
+        return (
+          <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+            <div className="bg-white p-6 rounded-3xl shadow-xl max-w-sm w-full border border-red-100 flex flex-col gap-4">
+              <ShieldAlert className="w-12 h-12 text-red-500 bg-red-50 p-2 rounded-2xl" />
+              <h2 className="font-black text-xl text-slate-800">Error de Conexión Segura</h2>
+              <p className="text-sm text-slate-600 leading-relaxed font-medium">{reauthError}</p>
+              <button onClick={() => performGlobalLogout()} className="mt-2 w-full py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold">Cerrar Sesión</button>
+            </div>
+          </div>
+        );
+      }
       return (
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
           <div className="flex flex-col items-center gap-4">
@@ -2677,7 +2704,16 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
     setLoading(true);
     setError('');
     try {
-      if (!auth.currentUser) await signInAnonymously(auth);
+      if (!auth.currentUser) {
+        try {
+          await signInAnonymously(auth);
+        } catch (e: any) {
+          if (e.code === 'auth/admin-restricted-operation') {
+            throw new Error('CONFIGURACIÓN REQUERIDA: Debes activar el proveedor de acceso "Anónimo" en la consola de Firebase > Authentication > Sign-in method.');
+          }
+          throw e; // re-throw other auth errors
+        }
+      }
       const q = query(collection(db, 'users'), where('usuario', '==', usuario.trim().toUpperCase()));
       const querySnapshot = await getDocs(q);
       
@@ -2761,7 +2797,16 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
     setLoading(true);
     setError('');
     try {
-      if (!auth.currentUser) await signInAnonymously(auth);
+      if (!auth.currentUser) {
+        try {
+          await signInAnonymously(auth);
+        } catch (e: any) {
+          if (e.code === 'auth/admin-restricted-operation') {
+            throw new Error('CONFIGURACIÓN REQUERIDA: Debes activar el proveedor de acceso "Anónimo" en Firebase > Authentication.');
+          }
+          throw e;
+        }
+      }
       
       const newUserId = changingPinFor.usuario.toLowerCase();
       const newUserData = { ...changingPinFor.userData, pin: newPinFromUser.trim() };

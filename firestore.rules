@@ -89,8 +89,8 @@ service cloud.firestore {
     match /users/{userId} {
       allow get: if isSignedIn();
       allow list: if isSignedIn();
-      allow create: if isSignedIn() && isOwner(userId) && isValidId(userId);
-      allow update: if isSignedIn() && (isOwner(userId) || isAdmin()) && isValidId(userId);
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
     }
 
     match /tasks/{taskId} {
