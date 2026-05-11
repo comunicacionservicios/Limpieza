@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Clock, Play, Square, PauseCircle, LogOut, CheckCircle2, UserCircle, Users, RefreshCcw, Plus, Calendar, FileText, ClipboardList, ShieldAlert, Bell, Menu, X, Activity, WifiOff, Coffee, Monitor, LayoutGrid, MoveRight, MapPin, AlertTriangle, Package, ShieldCheck, ChevronRight, Camera, Key, Home, BarChart2, Megaphone, History } from 'lucide-react';
+import { Clock, Play, Square, PauseCircle, LogOut, CheckCircle2, UserCircle, Users, RefreshCcw, Plus, Calendar, FileText, ClipboardList, ShieldAlert, Bell, Menu, X, Activity, WifiOff, Coffee, Monitor, LayoutGrid, MoveRight, MapPin, AlertTriangle, Package, ShieldCheck, ChevronRight, Camera, Key, Home, BarChart2, Megaphone, History, Trash2, Edit3 } from 'lucide-react';
 import { db, auth, OperationType, handleFirestoreError } from './lib/firebase';
 import { 
   collection, 
@@ -14,6 +14,7 @@ import {
   getDocs, 
   getDoc,
   updateDoc,
+  deleteDoc,
   where,
   Timestamp,
   serverTimestamp
@@ -350,7 +351,7 @@ function SupervisorProductivityStats({ registros, operarios, tasks }: { registro
         <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm">
           <h3 className="text-sm font-black text-slate-400 mb-6 uppercase tracking-widest px-2">Tareas por Operario</h3>
           <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minHeight={1} minWidth={1}>
               <BarChart data={stats.chartData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#64748b' }} />
@@ -368,7 +369,7 @@ function SupervisorProductivityStats({ registros, operarios, tasks }: { registro
         <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm">
           <h3 className="text-sm font-black text-slate-400 mb-6 uppercase tracking-widest px-2">Tiempo Promedio (Minutos)</h3>
           <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minHeight={1} minWidth={1}>
               <BarChart data={stats.chartData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#64748b' }} />
@@ -2650,9 +2651,9 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
   const [changingPinFor, setChangingPinFor] = useState<{usuario: string, userData: any} | null>(null);
   const [newPinFromUser, setNewPinFromUser] = useState('');
 
-  const TARGET_LAT = -26.833782; 
-  const TARGET_LNG = -65.200598;
-  const ALLOWED_RADIUS_METERS = 500;
+  const TARGET_LAT = -26.832961; 
+  const TARGET_LNG = -65.203290;
+  const ALLOWED_RADIUS_METERS = 300;
 
   useEffect(() => {
     if (!navigator.geolocation) {
@@ -2677,7 +2678,7 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
         setGeoStatus('denied');
         setError('Debe habilitar la ubicación para registrar su entrada.');
       },
-      { enableHighAccuracy: true, timeout: 10000 }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
     return () => navigator.geolocation.clearWatch(watchId);
   }, []);
@@ -3529,7 +3530,7 @@ function SupervisorTasksManager() {
               <div className="bg-slate-50 p-6 rounded-[24px] border border-slate-100">
                 <h4 className="text-sm font-bold text-slate-800 mb-6 border-b border-slate-200 pb-2">Tareas por Operario</h4>
                 <div className="h-[250px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height="100%" minHeight={1} minWidth={1}>
                     <BarChart data={operarios.filter(o => o.rol !== 'supervisor').map(op => ({
                       name: op.nombre,
                       tareas: tasks.filter(t => t.asignados?.includes(op.nombre)).length || (tasks.filter(t => !t.asignados || t.asignados.length === 0).length / (operarios.length || 1)).toFixed(1)
@@ -3547,7 +3548,7 @@ function SupervisorTasksManager() {
               <div className="bg-slate-50 p-6 rounded-[24px] border border-slate-100">
                 <h4 className="text-sm font-bold text-slate-800 mb-6 border-b border-slate-200 pb-2">Frecuencia de Tareas</h4>
                 <div className="h-[250px] w-full">
-                   <ResponsiveContainer width="100%" height="100%">
+                   <ResponsiveContainer width="100%" height="100%" minHeight={1} minWidth={1}>
                      <PieChart>
                        <Pie
                          data={[
@@ -3728,6 +3729,119 @@ function ActivityFeed({ registros }: { registros: any[] }) {
             Esperando actividad...
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function DailySupervisorReport({ registros, operarios, tasks }: { registros: any[], operarios: any[], tasks: any[] }) {
+  const todayStr = React.useMemo(() => new Date().toLocaleDateString('es-AR'), []);
+  
+  const reportData = React.useMemo(() => {
+    return operarios.filter(o => o.rol !== 'supervisor').map(op => {
+      const opsRecords = registros.filter(r => r.operario === op.nombre && new Date(r.inicio).toLocaleDateString('es-AR') === todayStr);
+      
+      let horaIngreso = '-';
+      let horaSalida = '-';
+      
+      if (opsRecords.length > 0) {
+        const sortedDesc = [...opsRecords].sort((a,b) => new Date(a.inicio).getTime() - new Date(b.inicio).getTime());
+        horaIngreso = new Date(sortedDesc[0].inicio).toLocaleTimeString('es-AR', { hour: '2-digit', minute:'2-digit' });
+        
+        const lastRec = sortedDesc[sortedDesc.length - 1];
+        if (lastRec.fin) {
+          horaSalida = new Date(lastRec.fin).toLocaleTimeString('es-AR', { hour: '2-digit', minute:'2-digit' });
+        } else {
+          horaSalida = 'En turno';
+        }
+      }
+
+      const tiempoActivoMin = opsRecords.filter(r => !r.accion?.includes('Descanso')).reduce((acc, r) => acc + (r.duracion_minutos || 0), 0);
+      const tiempoActivoStr = `${Math.floor(tiempoActivoMin/60)}h ${Math.round(tiempoActivoMin%60)}m`;
+
+      const tareasAsignadasList = tasks.filter(t => t.frecuencia === 'Diaria' && t.asignados?.includes(op.nombre));
+      const tareasAsignadas = tareasAsignadasList.length;
+
+      const tareasRealizadasList = opsRecords.filter(r => r.accion?.startsWith('Tarea: '));
+      const tareasRealizadas = tareasRealizadasList.length;
+
+      const eficiencia = tareasAsignadas > 0 ? Math.round((tareasRealizadas / tareasAsignadas) * 100) : (tareasRealizadas > 0 ? 100 : 0);
+
+      return {
+        nombre: op.nombre,
+        horaIngreso,
+        horaSalida,
+        tiempoActivoStr,
+        tiempoActivoMin,
+        tareasAsignadas,
+        tareasRealizadas,
+        eficiencia
+      }
+    }).sort((a, b) => b.eficiencia - a.eficiencia);
+  }, [registros, operarios, tasks, todayStr]);
+
+  return (
+    <div className="flex flex-col gap-6 w-full">
+      <div className="bg-white p-6 rounded-[24px] shadow-sm border border-slate-200 flex-1 overflow-x-auto">
+         <h3 className="font-bold text-lg text-slate-800 mb-6 flex items-center gap-2">
+           <UserCircle className="w-5 h-5 text-blue-500" /> Reporte Diario - {todayStr}
+         </h3>
+         
+         <table className="w-full text-left text-sm whitespace-nowrap">
+           <thead className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
+             <tr>
+               <th className="px-5 py-4 rounded-l-xl">Operario</th>
+               <th className="px-5 py-4 text-center">Ingreso</th>
+               <th className="px-5 py-4 text-center">Salida</th>
+               <th className="px-5 py-4 text-center">Tiempo Act.</th>
+               <th className="px-5 py-4 text-center">Asignadas</th>
+               <th className="px-5 py-4 text-center">Realizadas</th>
+               <th className="px-5 py-4 rounded-r-xl text-right">Eficiencia</th>
+             </tr>
+           </thead>
+           <tbody className="divide-y divide-slate-100">
+             {reportData.map((row, i) => (
+               <tr key={i} className="hover:bg-slate-50 transition-colors">
+                 <td className="px-5 py-4 font-bold text-slate-800 flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 text-xs">{row.nombre.charAt(0)}</div>
+                    {row.nombre}
+                 </td>
+                 <td className="px-5 py-4 text-slate-500 font-medium text-center">{row.horaIngreso}</td>
+                 <td className="px-5 py-4 text-slate-500 font-medium text-center">{row.horaSalida}</td>
+                 <td className="px-5 py-4 text-slate-700 font-bold text-center">{row.tiempoActivoStr}</td>
+                 <td className="px-5 py-4 text-center font-bold text-blue-600">{row.tareasAsignadas}</td>
+                 <td className="px-5 py-4 text-center font-bold text-emerald-600">{row.tareasRealizadas}</td>
+                 <td className="px-5 py-4 text-right">
+                    <span className={cn("px-3 py-1 rounded-lg text-xs font-black", row.eficiencia >= 80 ? "bg-emerald-100 text-emerald-700" : row.eficiencia >= 50 ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700")}>
+                      {row.eficiencia}%
+                    </span>
+                 </td>
+               </tr>
+             ))}
+           </tbody>
+         </table>
+         {reportData.length === 0 && <p className="text-center text-slate-400 py-6 text-sm font-medium">No hay operarios para mostrar.</p>}
+      </div>
+
+      <div className="bg-white p-6 rounded-[24px] shadow-sm border border-slate-200 w-full flex flex-col">
+         <h3 className="font-bold text-lg text-slate-800 mb-6 flex items-center gap-2">
+           <CheckCircle2 className="w-5 h-5 text-emerald-500" /> Tareas Hoy
+         </h3>
+         <div className="flex-1 min-h-[250px]">
+           <ResponsiveContainer width="100%" height="100%" minHeight={1} minWidth={1}>
+             <BarChart data={reportData}>
+               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+               <XAxis dataKey="nombre" axisLine={false} tickLine={false} tick={{fontSize: 9, fill: '#64748b'}} interval={0} angle={-45} textAnchor="end" height={60} />
+               <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#64748b'}} />
+               <Tooltip 
+                 cursor={{fill: '#f8fafc'}}
+                 contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
+               />
+               <Bar dataKey="tareasRealizadas" name="Realizadas" fill="#10b981" radius={[4, 4, 0, 0]} barSize={20} />
+               <Bar dataKey="tareasAsignadas" name="Asignadas" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={20} />
+             </BarChart>
+           </ResponsiveContainer>
+         </div>
       </div>
     </div>
   );
@@ -4179,6 +4293,7 @@ function UserProfile({ user, onUpdate }: { user: Operario, onUpdate: (u: Operari
 function PersonalManagement() {
   const [users, setUsers] = useState<Operario[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editingUser, setEditingUser] = useState<Partial<Operario> | null>(null);
 
   useEffect(() => {
     const q = query(collection(db, 'users'), orderBy('nombre', 'asc'));
@@ -4212,12 +4327,52 @@ function PersonalManagement() {
     }
   };
 
+  const deleteUser = async (userId: string) => {
+    try {
+      await deleteDoc(doc(db, 'users', userId));
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const saveUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    try {
+      const userData = {
+        ...editingUser,
+        usuario: editingUser.usuario?.trim().toUpperCase(),
+        pin: editingUser.pin?.trim(),
+      };
+      
+      if (editingUser.id) {
+        await updateDoc(doc(db, 'users', editingUser.id), userData);
+      } else {
+        const customId = editingUser.usuario!.toLowerCase();
+        await setDoc(doc(db, 'users', customId), {
+           ...userData,
+           activo: true,
+           rol: userData.rol || 'operario'
+        });
+      }
+      setEditingUser(null);
+    } catch (err) {
+      console.error(err);
+      alert('Error guardando usuario');
+    }
+  };
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-black text-slate-800">Módulo de Personal</h2>
-        <div className="flex bg-white px-4 py-2 rounded-xl border border-slate-200">
-           <span className="text-sm font-bold text-slate-500">Total: {users.length}</span>
+        <div className="flex gap-4">
+          <div className="flex bg-white px-4 py-2 rounded-xl border border-slate-200">
+             <span className="text-sm font-bold text-slate-500">Total: {users.length}</span>
+          </div>
+          <button onClick={() => setEditingUser({})} className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl font-bold transition-colors flex items-center gap-2">
+            <Plus className="w-5 h-5" /> Nuevo Usuario
+          </button>
         </div>
       </div>
 
@@ -4227,6 +4382,7 @@ function PersonalManagement() {
             <thead className="bg-slate-50 border-b border-slate-100">
               <tr>
                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Nombre / Usuario</th>
+                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Contraseña</th>
                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Rol</th>
                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Estado</th>
                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Acciones</th>
@@ -4240,6 +4396,9 @@ function PersonalManagement() {
                       <span className="text-sm font-bold text-slate-800">{u.nombre}</span>
                       <span className="text-[10px] font-black text-blue-500 tracking-wider uppercase">@{u.usuario || 'SIN_USUARIO'}</span>
                     </div>
+                  </td>
+                  <td className="px-6 py-5">
+                     <span className="text-xs font-mono text-slate-500 bg-slate-100 px-2 py-1 rounded">{u.pin || '---'}</span>
                   </td>
                   <td className="px-6 py-5">
                     <span className={cn(
@@ -4261,6 +4420,13 @@ function PersonalManagement() {
                   <td className="px-6 py-5 text-right">
                      <div className="flex justify-end gap-2">
                         <button 
+                          onClick={() => setEditingUser(u)}
+                          className="p-2 hover:bg-blue-50 text-blue-600 rounded-xl transition-colors"
+                          title="Editar"
+                        >
+                           <Edit3 className="w-5 h-5" />
+                        </button>
+                        <button 
                           onClick={() => toggleRole(u)}
                           className="p-2 hover:bg-amber-50 text-amber-600 rounded-xl transition-colors"
                           title="Cambiar Rol"
@@ -4277,6 +4443,13 @@ function PersonalManagement() {
                         >
                            {u.activo ? <X className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
                         </button>
+                        <button 
+                          onClick={() => deleteUser(u.id!)}
+                          className="p-2 hover:bg-rose-50 text-rose-600 rounded-xl transition-colors"
+                          title="Eliminar"
+                        >
+                           <Trash2 className="w-5 h-5" />
+                        </button>
                      </div>
                   </td>
                 </tr>
@@ -4287,6 +4460,69 @@ function PersonalManagement() {
         {loading && <div className="p-20 flex justify-center"><RefreshCcw className="w-8 h-8 animate-spin text-slate-200" /></div>}
         {users.length === 0 && !loading && <div className="p-20 text-center text-slate-400 font-bold tracking-widest uppercase text-xs">No se encontraron usuarios.</div>}
       </div>
+
+      {editingUser !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white p-6 rounded-[32px] w-full max-w-lg shadow-xl">
+            <h3 className="text-xl font-black text-slate-800 mb-6">{editingUser.id ? 'Editar Usuario' : 'Nuevo Usuario'}</h3>
+            <form onSubmit={saveUser} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">Nombre Completo</label>
+                <input 
+                  type="text" required
+                  value={editingUser.nombre || ''}
+                  onChange={e => setEditingUser({...editingUser, nombre: e.target.value})}
+                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3 outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">Usuario (ej: LPEREZ)</label>
+                <input 
+                  type="text" required disabled={!!editingUser.id}
+                  value={editingUser.usuario || ''}
+                  onChange={e => setEditingUser({...editingUser, usuario: e.target.value})}
+                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3 outline-none focus:border-blue-500 disabled:opacity-50 uppercase"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">WhatsApp (+549...)</label>
+                <input 
+                  type="text"
+                  value={editingUser.whatsapp || ''}
+                  onChange={e => setEditingUser({...editingUser, whatsapp: e.target.value})}
+                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3 outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">Contraseña / PIN</label>
+                <input 
+                  type="text" required
+                  value={editingUser.pin || ''}
+                  onChange={e => setEditingUser({...editingUser, pin: e.target.value})}
+                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3 outline-none focus:border-blue-500 font-mono text-lg"
+                />
+              </div>
+              {!editingUser.id && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">Rol</label>
+                  <select 
+                    value={editingUser.rol || 'operario'}
+                    onChange={e => setEditingUser({...editingUser, rol: e.target.value as any})}
+                    className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3 outline-none focus:border-blue-500"
+                  >
+                    <option value="operario">Operario</option>
+                    <option value="supervisor">Supervisor</option>
+                  </select>
+                </div>
+              )}
+              <div className="flex gap-4 pt-4">
+                <button type="button" onClick={() => setEditingUser(null)} className="flex-1 py-4 font-bold text-slate-500 bg-slate-100 rounded-2xl hover:bg-slate-200">Cancelar</button>
+                <button type="submit" className="flex-1 py-4 font-bold text-white bg-blue-600 rounded-2xl hover:bg-blue-700">Guardar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -4649,7 +4885,7 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
                     <UserCircle className="w-5 h-5 text-blue-500" /> Horas por Operario
                   </h3>
                   <div className="h-[250px] w-full flex-1">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" minHeight={1} minWidth={1}>
                       <BarChart data={
                         operarios.map(op => ({
                           name: op.nombre,
@@ -4680,7 +4916,7 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
                     <ClipboardList className="w-5 h-5 text-emerald-500" /> Resumen de Tareas
                   </h3>
                   <div className="h-[250px] w-full flex flex-col items-center">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" minHeight={1} minWidth={1}>
                       <PieChart>
                         <Pie
                           data={[
@@ -4730,7 +4966,7 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
         {tab === 'metricas' && <SupervisorProductivityStats registros={registros} operarios={operarios} tasks={tasks} />}
         {tab === 'reportes' && (
           <div className="flex flex-col gap-6">
-            <JibbleHourReport registros={registros} operarios={operarios} reportDateMode={reportDateMode} setReportDateMode={setReportDateMode} reportUserFilter={reportUserFilter} setReportUserFilter={setReportUserFilter} loading={loading} />
+            <DailySupervisorReport registros={registros} operarios={operarios} tasks={tasks} />
           </div>
         )}
 
