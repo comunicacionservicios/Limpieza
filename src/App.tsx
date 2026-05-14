@@ -370,36 +370,60 @@ function SupervisorProductivityStats({ registros, operarios, tasks }: { registro
 
 function SupervisorAnnouncements() {
   const [msg, setMsg] = useState('');
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
   const [history, setHistory] = useState<any[]>([]);
 
   const sendAnnouncement = async () => {
     if (!msg.trim()) return;
-    const item = { text: msg.trim(), date: new Date().toISOString() };
+    const item = { 
+      text: msg.trim(), 
+      start_time: startTime || null, 
+      end_time: endTime || null 
+    };
     
     try {
-      await supabase.from('announcements').insert(item);
+      const { error } = await supabase.from('announcements').insert(item);
+      if (error) throw error;
       setMsg('');
+      setStartTime('');
+      setEndTime('');
       alert("Comunicado enviado a todo el personal.");
+      fetchAnnouncements();
     } catch (error) {
       console.error(error);
+      alert("Error al enviar el comunicado.");
+    }
+  };
+
+  const deleteAnnouncement = async (id: string) => {
+    if (!confirm("¿Seguro que deseas eliminar este comunicado?")) return;
+    try {
+      const { error } = await supabase.from('announcements').delete().match({ id: id });
+      if (error) throw error;
+      setHistory(prev => prev.filter(h => h.id !== id));
+      alert("Comunicado eliminado.");
+    } catch (error) {
+      console.error("Error deleting announcement:", error);
+      alert("Error al eliminar el comunicado.");
+    }
+  };
+
+  const fetchAnnouncements = async () => {
+    const { data, error } = await supabase
+      .from('announcements')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(50);
+    
+    if (error) {
+      console.error(error);
+    } else {
+      setHistory(data as any[]);
     }
   };
 
   useEffect(() => {
-    const fetchAnnouncements = async () => {
-      const { data, error } = await supabase
-        .from('announcements')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(50);
-      
-      if (error) {
-        console.error(error);
-      } else {
-        setHistory(data as any[]);
-      }
-    };
-
     fetchAnnouncements();
 
     const channel = supabase.channel('realtime:announcements-admin').on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, fetchAnnouncements).subscribe();
@@ -412,24 +436,47 @@ function SupervisorAnnouncements() {
         <h3 className="text-lg font-black text-slate-800 mb-6 flex items-center gap-3">
           <Megaphone className="w-6 h-6 text-blue-500" /> Nuevo Comunicado
         </h3>
-        <p className="text-xs text-slate-400 font-bold mb-4 uppercase tracking-widest">Este mensaje llegará a la pantalla principal de todos los operarios.</p>
+        
+        <p className="text-xs text-slate-400 font-bold mb-4 uppercase tracking-widest">Contenido del Mensaje</p>
         <textarea 
           value={msg}
           onChange={e => setMsg(e.target.value)}
           placeholder="Escribe el anuncio para el personal..."
-          className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-sm outline-none min-h-[150px] mb-4 focus:border-blue-400"
+          className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-sm outline-none min-h-[120px] mb-6 focus:border-blue-400"
         />
+
+        <div className="grid grid-cols-2 gap-4 mb-6">
+          <div>
+            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">Hora Inicio (Desde)</label>
+            <input 
+              type="time"
+              value={startTime}
+              onChange={e => setStartTime(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs outline-none focus:border-blue-400"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">Hora Fin (Hasta)</label>
+            <input 
+              type="time"
+              value={endTime}
+              onChange={e => setEndTime(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs outline-none focus:border-blue-400"
+            />
+          </div>
+        </div>
+
         <button 
           onClick={sendAnnouncement}
           className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl shadow-slate-200 hover:bg-slate-800 active:scale-[0.98] transition-all"
         >
-          ENVIAR A TODOS
+          PUBLICAR COMUNICADO
         </button>
       </div>
 
       <div className="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm flex flex-col">
         <h3 className="text-sm font-black text-slate-400 mb-6 uppercase tracking-widest">Historial de Comunicación</h3>
-        <div className="space-y-4 overflow-y-auto max-h-[400px] pr-2">
+        <div className="space-y-4 overflow-y-auto max-h-[500px] pr-2">
           {history.length === 0 ? (
              <div className="h-full flex flex-col items-center justify-center opacity-30 py-10">
                <History className="w-12 h-12 mb-2" />
@@ -437,12 +484,26 @@ function SupervisorAnnouncements() {
              </div>
           ) : (
             history.map(h => (
-              <div key={h.id} className="p-4 bg-slate-50 border border-slate-100 rounded-2xl relative group">
+              <div key={h.id} className="p-4 bg-slate-50 border border-slate-100 rounded-2xl relative group pr-10">
                 <p className="text-xs text-slate-700 leading-relaxed font-medium mb-2">{h.text}</p>
-                <div className="flex justify-between items-center text-[9px] font-bold text-slate-400 uppercase tracking-widest">
-                  <span>{new Date(h.date).toLocaleDateString()}</span>
-                  <span>{new Date(h.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                <div className="flex flex-col gap-1">
+                  <div className="flex justify-between items-center text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                    <span>{new Date(h.created_at || h.date).toLocaleDateString()}</span>
+                    <span>{new Date(h.created_at || h.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                  {(h.start_time || h.end_time) && (
+                    <div className="flex items-center gap-1.5 text-[8px] font-black text-blue-500 uppercase tracking-[0.1em]">
+                      <Clock className="w-3 h-3" />
+                      Rango: {h.start_time || '00:00'} - {h.end_time || '23:59'}
+                    </div>
+                  )}
                 </div>
+                <button 
+                  onClick={() => deleteAnnouncement(h.id)}
+                  className="absolute top-4 right-4 text-slate-300 hover:text-rose-500 transition-colors p-1"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>
             ))
           )}
@@ -1324,6 +1385,102 @@ function InstallBanner({ installProps }: { installProps: any }) {
 }
 
 
+// -- Operario Task History --
+function OperarioTaskHistory({ user }: { user: Operario }) {
+  const [history, setHistory] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchHistory = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('logs')
+          .select('*')
+          .eq('operario_id', user.id)
+          .like('accion', 'Tarea:%')
+          .not('fin', 'is', null) // Only completed tasks
+          .order('inicio', { ascending: false })
+          .limit(50);
+        
+        if (error) throw error;
+        setHistory(data || []);
+      } catch (err) {
+        console.error("Error fetching history:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchHistory();
+  }, [user.id]);
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 opacity-30">
+        <RefreshCcw className="w-10 h-10 animate-spin mb-4" />
+        <p className="text-xs font-black uppercase tracking-widest">Cargando Historial...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+        <History className="w-5 h-5 text-blue-500" /> Mis Tareas Recientes
+      </h3>
+      
+      {history.length === 0 ? (
+        <div className="bg-slate-50 border border-slate-100 rounded-3xl p-10 flex flex-col items-center justify-center text-center">
+          <ClipboardList className="w-12 h-12 text-slate-200 mb-4" />
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Aún no has completado tareas.</p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {history.map((h) => {
+            const taskTitle = h.accion.replace('Tarea: ', '');
+            const startDate = new Date(h.inicio);
+            const endDate = new Date(h.fin);
+            
+            return (
+              <div key={h.id} className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm">
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <h4 className="font-black text-slate-800 text-sm">{taskTitle}</h4>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">
+                      {startDate.toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' })}
+                    </p>
+                  </div>
+                  <div className="bg-emerald-50 text-emerald-600 text-[9px] font-black px-2 py-1 rounded-lg border border-emerald-100 uppercase">
+                    Completada
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4 border-t border-slate-50 pt-3">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest">Duración</span>
+                    <span className="text-xs font-bold text-slate-600">{h.duracion_minutos} min</span>
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest">Finalizó a las</span>
+                    <span className="text-xs font-bold text-slate-600">
+                      {endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                </div>
+
+                {h.detalles && (
+                  <div className="mt-3 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                    <p className="text-[10px] text-slate-500 font-medium italic">{h.detalles}</p>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // -- Main App --
 
 export default function App() {
@@ -1361,7 +1518,7 @@ export default function App() {
 
   // Menu & Dashboard States
   const [menuOpen, setMenuOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'tareas' | 'horarios' | 'insumos' | 'incidencias' | 'capacitacion' | 'rrhh' | 'perfil'>('tareas');
+  const [activeTab, setActiveTab] = useState<'tareas' | 'horarios' | 'insumos' | 'incidencias' | 'capacitacion' | 'rrhh' | 'perfil' | 'historial'>('tareas');
   const [location, setLocation] = useState<string>('');
   const [notificationsCount, setNotificationsCount] = useState(0);
 
@@ -1519,6 +1676,7 @@ export default function App() {
                 <nav className="flex-1 overflow-y-auto pr-2 flex flex-col gap-1">
                   {[
                     { id: 'tareas', icon: Home, label: 'Inicio' },
+                    { id: 'historial', icon: History, label: 'Mi Historial' },
                     { id: 'incidencias', icon: AlertTriangle, label: 'Incidencias' },
                     { id: 'perfil', icon: UserCircle, label: 'Mi Perfil' },
                   ].map((item) => (
@@ -2093,6 +2251,8 @@ function Dashboard({
           </section>
         )}
 
+        {activeTab === 'historial' && <OperarioTaskHistory user={user} />}
+
         {activeTab === 'perfil' && <UserProfile user={user} onUpdate={onUserUpdate} />}
         
             {activeTab === 'incidencias' && (
@@ -2151,18 +2311,45 @@ function AnunciosBanner() {
         .from('announcements')
         .select('*')
         .order('created_at', { ascending: false })
-        .limit(5);
+        .limit(10);
       
       if (error) {
         console.error("Error loading announcements:", error);
       } else {
-        setAnnouncements(data || []);
+        // Filtrar por horario actual del cliente
+        const now = new Date();
+        const currentTime = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
+        
+        const validAnnouncements = (data || []).filter((h: any) => {
+          if (!h.start_time && !h.end_time) return true;
+          
+          const start = h.start_time || '00:00';
+          const end = h.end_time || '23:59';
+          
+          if (start <= end) {
+            return currentTime >= start && currentTime <= end;
+          } else {
+            // Rango nocturno
+            return currentTime >= start || currentTime <= end;
+          }
+        });
+
+        setAnnouncements(validAnnouncements);
       }
     };
     fetchAnnouncements();
     
-    const channel = supabase.channel('realtime:announcements-banner').on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, fetchAnnouncements).subscribe();
-    return () => { supabase.removeChannel(channel); };
+    // Refresh every minute to update visibility based on time
+    const timer = setInterval(fetchAnnouncements, 60000);
+    
+    const channel = supabase.channel('realtime:announcements-banner')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, fetchAnnouncements)
+      .subscribe();
+      
+    return () => { 
+      supabase.removeChannel(channel); 
+      clearInterval(timer);
+    };
   }, []);
 
   if (announcements.length === 0) return null;
@@ -2180,19 +2367,26 @@ function AnunciosBanner() {
       </div>
       <div className="relative z-10">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-400">Comunicado Oficial</span>
-          <span className="text-[8px] font-bold text-slate-500">{new Date(current.date).toLocaleDateString()}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-400">Comunicado</span>
+            {current.end_time && (
+              <span className="text-[8px] font-bold text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded leading-none">
+                Vence {current.end_time}
+              </span>
+            )}
+          </div>
+          <span className="text-[8px] font-bold text-slate-500">{new Date(current.created_at || current.date).toLocaleDateString()}</span>
         </div>
         <p className="text-xs font-bold leading-relaxed">{current.text}</p>
         
         {announcements.length > 1 && (
           <div className="flex gap-1 mt-3">
              {announcements.map((_, i) => (
-               <button 
-                key={i} 
-                onClick={() => setCurrentIndex(i)}
-                className={cn("h-1 rounded-full transition-all", i === currentIndex ? "w-4 bg-blue-500" : "w-1 bg-slate-700")} 
-               />
+                <button 
+                  key={i} 
+                  onClick={() => setCurrentIndex(i)}
+                  className={cn("h-1 rounded-full transition-all", i === currentIndex ? "w-4 bg-blue-500" : "w-1 bg-slate-700")} 
+                />
              ))}
           </div>
         )}
