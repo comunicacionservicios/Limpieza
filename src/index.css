@@ -14,6 +14,24 @@
   --color-blue-700: #08294e;
   --color-blue-800: #061e39;
   --color-blue-900: #041426;
+
+  /* Shadows */
+  --shadow-luxury: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+}
+
+@layer components {
+  .btn-primary {
+    @apply py-4 px-6 bg-blue-600 text-white rounded-2xl font-black text-[11px] uppercase tracking-widest shadow-xl shadow-blue-900/10 hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center gap-2;
+  }
+  .btn-secondary {
+    @apply py-3 px-5 bg-white text-slate-800 border border-slate-200 rounded-xl font-bold text-xs hover:bg-slate-50 active:scale-95 transition-all flex items-center justify-center gap-2;
+  }
+  .btn-danger {
+    @apply py-4 px-6 bg-rose-600 text-white rounded-2xl font-black text-[11px] uppercase tracking-widest shadow-xl shadow-rose-900/10 hover:bg-rose-700 active:scale-95 transition-all flex items-center justify-center gap-2;
+  }
+  .card {
+    @apply bg-white rounded-3xl border border-slate-200 shadow-sm p-6;
+  }
 }
 
 body {

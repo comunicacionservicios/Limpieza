@@ -23,12 +23,21 @@ service cloud.firestore {
       return resource.data;
     }
 
+    function getUsername() {
+      return get(/databases/$(database)/documents/user_auth_map/$(request.auth.uid)).data.username;
+    }
+
     function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+      return isSignedIn() && (
+        request.auth.uid == userId ||
+        (exists(/databases/$(database)/documents/user_auth_map/$(request.auth.uid)) && getUsername() == userId)
+      );
     }
 
     function isAdmin() {
       return isSignedIn() && (
+        (exists(/databases/$(database)/documents/user_auth_map/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(getUsername())).data.rol == 'supervisor') ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.rol == 'supervisor') ||
         (request.auth.token.email == 'comunicacionservicios@arevalo.com.ar')
@@ -122,6 +131,11 @@ service cloud.firestore {
     match /chat/{id} {
       allow read: if isSignedIn();
       allow create: if isSignedIn();
+    }
+
+    match /user_auth_map/{uid} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == uid;
     }
 
     match /logs/{id} {

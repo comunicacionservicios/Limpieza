@@ -1,30 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Clock, Play, Square, PauseCircle, LogOut, CheckCircle2, UserCircle, Users, RefreshCcw, Plus, Calendar, FileText, ClipboardList, ShieldAlert, Bell, Menu, X, Activity, WifiOff, Coffee, Monitor, LayoutGrid, MoveRight, MapPin, AlertTriangle, Package, ShieldCheck, ChevronRight, Camera, Key, Home, BarChart2, Megaphone, History, Trash2, Edit3 } from 'lucide-react';
-import { db, auth, OperationType, handleFirestoreError } from './lib/firebase';
-import { 
-  collection, 
-  onSnapshot, 
-  query, 
-  orderBy, 
-  limit, 
-  addDoc, 
-  setDoc, 
-  doc, 
-  getDocs, 
-  getDoc,
-  updateDoc,
-  deleteDoc,
-  where,
-  Timestamp,
-  serverTimestamp
-} from 'firebase/firestore';
-import { 
-  onAuthStateChanged, 
-  signInAnonymously,
-  signOut,
-  User as FirebaseUser
-} from 'firebase/auth';
+import { Clock, Play, Square, PauseCircle, LogOut, CheckCircle2, UserCircle, Users, RefreshCcw, Plus, Calendar, FileText, ClipboardList, ShieldAlert, Bell, Menu, X, Activity, WifiOff, Coffee, Monitor, LayoutGrid, MoveRight, MapPin, AlertTriangle, Package, ShieldCheck, ChevronRight, Camera, Key, Home, BarChart2, Megaphone, History, Trash2, Edit3, Settings, Shield } from 'lucide-react';
+import { supabase } from './lib/supabase';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -136,25 +113,28 @@ function SupervisorIncidentsLog() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const q = query(collection(db, 'incidents'), orderBy('fecha', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setIncidencias(data);
+    const fetchIncidents = async () => {
+      const { data, error } = await supabase
+        .from('incidents')
+        .select('*')
+        .order('fecha', { ascending: false });
+      if (error) console.error(error);
+      else setIncidencias(data);
       setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'incidents');
-    });
-    return () => unsubscribe();
+    };
+    fetchIncidents();
+    const channel = supabase.channel('realtime:incidents').on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, fetchIncidents).subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
   const updateStatus = async (id: string, newStatus: string) => {
     try {
-      await updateDoc(doc(db, 'incidents', id), { estado: newStatus });
+      await supabase.from('incidents').update({ estado: newStatus }).eq('id', id);
       if (selectedIncident?.id === id) {
         setSelectedIncident((prev: any) => ({ ...prev, estado: newStatus }));
       }
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `incidents/${id}`);
+      console.error(error);
     }
   };
 
@@ -301,9 +281,9 @@ function SupervisorProductivityStats({ registros, operarios, tasks }: { registro
     const completedTasks = registros.filter(r => r.accion?.includes('Tarea:') && r.fin);
     
     completedTasks.forEach(r => {
-      if (operarioStats[r.operario]) {
-        operarioStats[r.operario].completed += 1;
-        operarioStats[r.operario].totalTime += (r.duracion_minutos || 0);
+      if (operarioStats[r.operario_nombre]) {
+        operarioStats[r.operario_nombre].completed += 1;
+        operarioStats[r.operario_nombre].totalTime += (r.duracion_minutos || 0);
       }
     });
 
@@ -394,26 +374,36 @@ function SupervisorAnnouncements() {
 
   const sendAnnouncement = async () => {
     if (!msg.trim()) return;
-    const item = { text: msg.trim(), date: new Date().toISOString(), createdAt: serverTimestamp() };
+    const item = { text: msg.trim(), date: new Date().toISOString() };
     
     try {
-      await addDoc(collection(db, 'announcements'), item);
+      await supabase.from('announcements').insert(item);
       setMsg('');
       alert("Comunicado enviado a todo el personal.");
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'announcements');
+      console.error(error);
     }
   };
 
   useEffect(() => {
-    const q = query(collection(db, 'announcements'), orderBy('createdAt', 'desc'), limit(50));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setHistory(data);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'announcements');
-    });
-    return () => unsubscribe();
+    const fetchAnnouncements = async () => {
+      const { data, error } = await supabase
+        .from('announcements')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50);
+      
+      if (error) {
+        console.error(error);
+      } else {
+        setHistory(data as any[]);
+      }
+    };
+
+    fetchAnnouncements();
+
+    const channel = supabase.channel('realtime:announcements-admin').on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, fetchAnnouncements).subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
   return (
@@ -477,11 +467,15 @@ function SupervisorShiftManager() {
   useEffect(() => {
     const fetchTareas = async () => {
       try {
-        const querySnapshot = await getDocs(collection(db, 'tasks'));
-        const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setCatTareas(data);
+        const { data, error } = await supabase
+          .from('tasks')
+          .select('*')
+          .order('created_at', { ascending: false });
+        
+        if (error) throw error;
+        setCatTareas(data || []);
       } catch (err) {
-        handleFirestoreError(err, OperationType.LIST, 'tasks');
+        console.error(err);
       }
     };
     fetchTareas();
@@ -676,6 +670,8 @@ interface Operario {
   rol: 'operario' | 'supervisor';
   email?: string;
   whatsapp?: string;
+  horario_entrada?: string; // HH:mm
+  horario_salida?: string;  // HH:mm
   activo?: boolean;
 }
 
@@ -920,25 +916,24 @@ function IncidenciasModule({ user, onReported }: { user: Operario, onReported: (
     setLoading(true);
     
     const nuevaIncidencia = {
-      operarioId: user.id || 'unknown',
+      operario_id: user.id || 'unknown',
       autor: user.nombre,
       tipo,
       urgencia,
       descripcion: desc,
       fecha: new Date().toISOString(),
-      estado: 'Abierto',
-      createdAt: serverTimestamp()
+      estado: 'Abierto'
     };
 
     try {
-      const docRef = await addDoc(collection(db, 'incidents'), nuevaIncidencia);
+      const { data, error } = await supabase.from('incidents').insert(nuevaIncidencia).select().single();
+      if (error) throw error;
       setLoading(false);
       
       const shareContent = `*Reporte de Incidencia*\n📌 *Tipo:* ${tipo}\n🚨 *Urgencia:* ${urgencia}\n👤 *Autor:* ${user.nombre}\n📝 *Descripción:* ${desc}`;
-      setShowShareModal({ id: docRef.id, content: shareContent });
+      setShowShareModal({ id: data.id, content: shareContent });
     } catch (error) {
       console.error("Error reporting incident:", error);
-      handleFirestoreError(error, OperationType.CREATE, 'incidents');
       setLoading(false);
     }
   };
@@ -1209,8 +1204,7 @@ function usePWAInstall() {
 
   const handleInstall = async () => {
     if (!deferredPrompt) {
-      alert("La aplicación ya está instalada o tu navegador no soporta la instalación automática. Si usas iPhone, pulsa el botón Compartir y luego 'Añadir a pantalla de inicio'.");
-      return;
+      return false;
     }
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
@@ -1218,9 +1212,78 @@ function usePWAInstall() {
       setShowInstallBtn(false);
     }
     setDeferredPrompt(null);
+    return true;
   };
 
   return { showInstallBtn, handleInstall, isSupported: !!deferredPrompt };
+}
+
+function PWAHelpModal({ isOpen, onClose, installProps }: { isOpen: boolean, onClose: () => void, installProps: any }) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[10000] flex items-center justify-center p-4" onClick={onClose}>
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-white w-full max-w-sm rounded-[32px] p-8 shadow-2xl overflow-hidden relative"
+        onClick={e => e.stopPropagation()}
+      >
+        <button onClick={onClose} className="absolute top-4 right-4 p-2 bg-slate-100 rounded-full">
+          <X className="w-4 h-4 text-slate-500" />
+        </button>
+
+        <h3 className="text-xl font-black text-slate-800 mb-6 flex items-center gap-2">
+          <Monitor className="w-6 h-6 text-blue-500" /> Guía de Instalación
+        </h3>
+
+        <div className="space-y-6">
+          <section>
+            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+              <div className="w-5 h-5 bg-blue-100 rounded text-blue-600 flex items-center justify-center">1</div>
+              ¿Cómo instalar?
+            </h4>
+            <div className="space-y-4">
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <p className="text-xs font-black text-slate-800 mb-1">Android (Chrome)</p>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  Pulsa el botón "Instalar App" en el menú o busca en el menú de Chrome (3 puntos) la opción <strong>"Instalar aplicación"</strong>.
+                </p>
+              </div>
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <p className="text-xs font-black text-slate-800 mb-1">iPhone / iOS (Safari)</p>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  Pulsa el botón <strong>Compartir</strong> (cuadrado con flecha arriba) y selecciona <strong>"Añadir a pantalla de inicio"</strong>.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+              <div className="w-5 h-5 bg-rose-100 rounded text-rose-600 flex items-center justify-center">2</div>
+              ¿No puedes reinstalar?
+            </h4>
+            <p className="text-[11px] text-slate-500 leading-relaxed bg-rose-50 p-4 rounded-2xl border border-rose-100">
+              Si borraste la app y el botón no aparece, usa la opción manual del navegador descrita arriba. Si persiste, borra el historial/caché de este sitio en tu navegador.
+            </p>
+          </section>
+        </div>
+
+        <button 
+          onClick={async () => {
+            const success = await installProps.handleInstall();
+            if (!success) {
+               alert("Usa el método manual de tu navegador para instalar.");
+            }
+          }}
+          className="btn-primary w-full mt-8"
+        >
+          Intentar Instalación Automática
+        </button>
+      </motion.div>
+    </div>
+  );
 }
 
 function InstallBanner({ installProps }: { installProps: any }) {
@@ -1268,44 +1331,12 @@ export default function App() {
   useReminderChecker();
   // Authentication State
   const [user, setUser] = useStickyState<Operario | null>(null, 'limpieza_user');
-  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [loginDate, setLoginDate] = useStickyState<string | null>(null, 'limpieza_login_date');
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
-      setFirebaseUser(fbUser);
-      if (fbUser) {
-        // If we have a firebase user, try to get their profile from Firestore
-        try {
-          const userDoc = await getDoc(doc(db, 'users', fbUser.uid));
-          if (userDoc.exists()) {
-            const userData = { ...(userDoc.data() as any), id: fbUser.uid } as Operario;
-            setUser(userData);
-          } else if (user) {
-            // If user exists in local storage but not in firestore, we might need to sync it
-            // This happens if they signed in with PIN and then linked Google, or vice versa
-            if (user.rol === 'supervisor' || user.rol === 'operario') {
-                await setDoc(doc(db, 'users', fbUser.uid), {
-                    uid: fbUser.uid,
-                    nombre: user.nombre,
-                    rol: user.rol,
-                    email: fbUser.email || null
-                });
-            }
-          }
-        } catch (error) {
-          console.error("Error fetching user profile:", error);
-        }
-      } else {
-        // If logged out from Firebase
-        if (user && user.id && user.id.length > 20) { // Likely a Firebase UID
-           // setUser(null); 
-        }
-      }
-      setAuthLoading(false);
-    });
-    return () => unsubscribe();
+    // Basic auth mapping is no longer needed with Supabase and custom PIN login
+    setAuthLoading(false);
   }, []);
   
   // App states
@@ -1321,6 +1352,11 @@ export default function App() {
   const [activeTask, setActiveTask] = useStickyState<TareaPlan | null>(null, 'limpieza_active_task');
   const [taskStart, setTaskStart] = useStickyState<string | null>(null, 'limpieza_task_start');
   const [taskComment, setTaskComment] = useStickyState<string>('', 'limpieza_task_comment');
+  
+  const [sessionLogId, setSessionLogId] = useStickyState<string | null>(null, 'limpieza_session_log_id');
+  const [shiftLogId, setShiftLogId] = useStickyState<string | null>(null, 'limpieza_shift_log_id');
+  const [breakLogId, setBreakLogId] = useStickyState<string | null>(null, 'limpieza_break_log_id');
+  const [taskLogId, setTaskLogId] = useStickyState<string | null>(null, 'limpieza_task_log_id');
 
   // Menu & Dashboard States
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1340,12 +1376,17 @@ export default function App() {
   useEffect(() => {
     // Check pending tasks count to simulate notifications
     async function checkNotifications() {
-      if (!user || !firebaseUser) return;
+      if (!user) return;
       try {
-        const q = query(collection(db, 'tasks'), orderBy('createdAt', 'desc'), limit(10));
-        const querySnapshot = await getDocs(q);
-        const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        if (data.length > 0) {
+        const { data, error } = await supabase
+          .from('tasks')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(10);
+        
+        if (error) throw error;
+        
+        if (data && data.length > 0) {
           const urgentes = data.filter((d: any) => d.fecha_vencimiento);
           setNotificationsCount(urgentes.length > 0 ? urgentes.length : 1);
         }
@@ -1369,12 +1410,6 @@ export default function App() {
   }, [user, loginDate]);
 
   const performGlobalLogout = async () => {
-    try {
-      await signOut(auth);
-    } catch (e) {
-      console.error("Logout error:", e);
-    }
-    
     // Clear all sticky states manually to ensure clean slate
     localStorage.removeItem('limpieza_user');
     localStorage.removeItem('limpieza_login_date');
@@ -1406,52 +1441,6 @@ export default function App() {
 
   const [reauthError, setReauthError] = useState<string | null>(null);
 
-  useEffect(() => {
-    // If we have a user from sticky state but no firebase user yet and not loading auth
-    if (user && !firebaseUser && !authLoading) {
-      if (user.rol === 'operario' || user.id?.startsWith('sv-') || user.id?.length < 20) {
-        signInAnonymously(auth).catch(e => {
-          console.warn("Re-auth failed:", e);
-          if (e.code === 'auth/admin-restricted-operation') {
-            setReauthError('CONFIGURACIÓN REQUERIDA: Debes activar el proveedor de acceso "Anónimo" en la consola de Firebase > Authentication > Sign-in method.');
-          } else {
-            setReauthError('Error de autenticación. Verifica tu conexión a internet.');
-          }
-        });
-      }
-    }
-  }, [user, firebaseUser, authLoading]);
-
-  // If we have a user from sticky state but no firebase user yet
-  if (user && !firebaseUser && !authLoading) {
-    if (user.rol === 'operario' || user.id?.startsWith('sv-') || user.id?.length < 20) {
-      if (reauthError) {
-        return (
-          <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-            <div className="bg-white p-6 rounded-3xl shadow-xl max-w-sm w-full border border-red-100 flex flex-col gap-4">
-              <ShieldAlert className="w-12 h-12 text-red-500 bg-red-50 p-2 rounded-2xl" />
-              <h2 className="font-black text-xl text-slate-800">Error de Conexión Segura</h2>
-              <p className="text-sm text-slate-600 leading-relaxed font-medium">{reauthError}</p>
-              <button onClick={() => performGlobalLogout()} className="mt-2 w-full py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold">Cerrar Sesión</button>
-            </div>
-          </div>
-        );
-      }
-      return (
-        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-          <div className="flex flex-col items-center gap-4">
-            <div className="w-12 h-12 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin"></div>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest animate-pulse">Restaurando sesión...</p>
-          </div>
-        </div>
-      );
-    } else {
-      // Must be a Google user that lost session, they need to manually re-login
-      performGlobalLogout();
-      return null;
-    }
-  }
-
   // Also block rendering if still loading
   if (authLoading) {
     return (
@@ -1468,7 +1457,10 @@ export default function App() {
     return (
       <>
         <InstallBanner installProps={installProps} />
-        <LoginScreen onLogin={(u, d) => { setUser(u); setLoginDate(d); }} installProps={installProps} />
+        <LoginScreen onLogin={async (u, d) => { 
+          setUser(u); 
+          setLoginDate(d); 
+        }} installProps={installProps} />
       </>
     );
   }
@@ -1482,9 +1474,12 @@ export default function App() {
     );
   }
 
+  const [showPWAHelp, setShowPWAHelp] = useState(false);
+
   return (
     <div className="min-h-screen bg-slate-100 flex items-start justify-center w-full font-sans text-slate-800">
       <InstallBanner installProps={installProps} />
+      <PWAHelpModal isOpen={showPWAHelp} onClose={() => setShowPWAHelp(false)} installProps={installProps} />
       <div className="w-full bg-white min-h-screen shadow-sm overflow-hidden relative flex flex-col pb-8">
         
         {/* SIDE MENU OVERLAY */}
@@ -1542,6 +1537,14 @@ export default function App() {
                       <span>{item.label}</span>
                     </button>
                   ))}
+
+                  <button
+                    onClick={() => { setShowPWAHelp(true); setMenuOpen(false); }}
+                    className="flex items-center gap-4 px-4 py-4 rounded-2xl font-bold text-blue-600 hover:bg-blue-50 transition-all w-full text-left"
+                  >
+                    <Monitor className="w-6 h-6" />
+                    <span>Descargar App</span>
+                  </button>
 
                   <div className="my-4 border-t border-slate-100" />
                   <button 
@@ -1725,12 +1728,11 @@ function Dashboard({
       
       for (const record of pending) {
         try {
-          // Firebase fallback
-          await addDoc(collection(db, 'logs'), {
+          const { error } = await supabase.from('logs').insert({
             ...record,
-            operarioId: user?.id || 'unknown',
-            createdAt: serverTimestamp()
+            operario_id: user?.id || 'unknown'
           });
+          if (error) throw error;
         } catch (e) {
           console.error("Sync error for record:", e);
           remaining.push(record);
@@ -1755,18 +1757,17 @@ function Dashboard({
     const durationMinutes = Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000));
     
     const payload: any = {
-      operarioId: user?.id || 'unknown',
-      operario: user?.nombre || 'Desconocido',
+      operario_id: user?.id || 'unknown',
+      operario_nombre: user?.nombre || 'Desconocido',
       accion: comentario ? `${accion} (Obs: ${comentario})` : accion,
       inicio: start.toISOString(),
       fin: end.toISOString(),
       duracion_minutos: durationMinutes,
-      comentario: comentario || null,
-      fecha: start.toLocaleDateString('es-AR')
+      detalles: comentario || null,
+      fecha_argentina: start.toLocaleDateString('es-AR')
     };
 
     if (!navigator.onLine) {
-      // Offline mode: Queue for later
       const pendingJson = localStorage.getItem('limpieza_pending_sync');
       const pending = pendingJson ? JSON.parse(pendingJson) : [];
       pending.push(payload);
@@ -1774,16 +1775,15 @@ function Dashboard({
       return;
     }
 
-    // Save to Firestore (logs)
     try {
-      await addDoc(collection(db, 'logs'), {
-        ...payload,
-        createdAt: serverTimestamp()
-      });
-    } catch (error) {
-      console.error("Error saving record:", error);
-      handleFirestoreError(error, OperationType.CREATE, 'logs');
-      // Fallback: Add to queue if network fails during request
+      const { error } = await supabase.from('logs').insert(payload);
+      if (error) {
+        console.error("Supabase insert error details:", error);
+        throw error;
+      }
+    } catch (error: any) {
+      console.error("Error saving record to Supabase:", error);
+      // Fallback: save to localStorage if DB fails
       const pendingJson = localStorage.getItem('limpieza_pending_sync');
       const pending = pendingJson ? JSON.parse(pendingJson) : [];
       pending.push(payload);
@@ -1820,6 +1820,12 @@ function Dashboard({
     if (shiftState === 'paused' && breakStart) {
       await recordTime('Descanso (Final)', breakStart);
     }
+
+    // Registrar la Jornada Completa (desde el primer Inicio de Jornada hasta ahora)
+    if (jornadaStart) {
+      await recordTime('Jornada Completa', jornadaStart);
+    }
+
     setShiftState('idle');
     setShiftStart(null);
     setJornadaStart(null);
@@ -1831,7 +1837,7 @@ function Dashboard({
     }
   };
 
-  const handleStartTask = (task: TareaPlan) => {
+  const handleStartTask = async (task: TareaPlan) => {
     if (shiftState !== 'active') {
       alert("Por favor INICIE SU TURNO antes de comenzar una tarea.");
       return;
@@ -1845,10 +1851,10 @@ function Dashboard({
       await recordTime(`Tarea: ${activeTask.titulo}`, taskStart, taskComment);
       
       try {
-        await updateDoc(doc(db, 'tasks', activeTask.id), {
-          lastCompletedDate: new Date().toISOString(),
-          lastCompletedBy: user?.nombre || 'Operario'
-        });
+        await supabase.from('tasks').update({
+          last_completed_date: new Date().toISOString(),
+          last_completed_by: user?.nombre || 'Operario'
+        }).eq('id', activeTask.id);
       } catch (e) {
         console.warn("Could not update task completion status", e);
       }
@@ -1970,6 +1976,15 @@ function Dashboard({
 
       <div className="px-6 flex-1 flex flex-col gap-6">
         
+        {user.pin && ['1', '1211', '1234'].includes(user.pin) && (
+          <div className="bg-amber-100/50 p-4 rounded-2xl border border-amber-200">
+             <p className="text-amber-800 text-xs font-bold leading-relaxed flex items-start gap-2">
+               <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+               Tu PIN actual es el de por defecto. Para mayor seguridad, te sugerimos cambiarlo desde la sección "Mi Perfil".
+             </p>
+          </div>
+        )}
+
         {/* NEW: ANUNCIOS DEL SUPERVISOR */}
         <AnunciosBanner />
         
@@ -2065,14 +2080,13 @@ function Dashboard({
                    />
                  </div>
                  
-                 <motion.button 
-                   whileTap={{ scale: 0.96 }}
+                 <button 
                    onClick={handleFinishTask}
-                   className="w-full py-4 bg-slate-900 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 uppercase"
+                   className="btn-primary w-full"
                  >
                    <CheckCircle2 className="w-5 h-5" />
                    Terminar Tarea
-                 </motion.button>
+                 </button>
                </motion.div>
              ) : (
                <TaskSelector onStart={handleStartTask} shiftActive={shiftState === 'active'} user={user} />
@@ -2133,14 +2147,23 @@ function AnunciosBanner() {
   const [currentIndex, setCurrentIndex] = useState(0);
 
   useEffect(() => {
-    const q = query(collection(db, 'announcements'), orderBy('createdAt', 'desc'), limit(5));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setAnnouncements(data);
-    }, (error) => {
-      console.error("Error loading announcements:", error);
-    });
-    return () => unsubscribe();
+    const fetchAnnouncements = async () => {
+      const { data, error } = await supabase
+        .from('announcements')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(5);
+      
+      if (error) {
+        console.error("Error loading announcements:", error);
+      } else {
+        setAnnouncements(data || []);
+      }
+    };
+    fetchAnnouncements();
+    
+    const channel = supabase.channel('realtime:announcements-banner').on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, fetchAnnouncements).subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
   if (announcements.length === 0) return null;
@@ -2179,12 +2202,12 @@ function AnunciosBanner() {
   );
 }
 function ShiftButton({ color, label, icon, onClick, small, disabled }: { color: 'green'|'yellow'|'red', label: string, icon: React.ReactNode, onClick: ()=>void, small?: boolean, disabled?: boolean }) {
-  const baseClasses = disabled ? "opacity-50 grayscale cursor-not-allowed" : "shadow-lg active:shadow-sm";
+  const baseClasses = disabled ? "opacity-50 grayscale cursor-not-allowed" : "active:scale-95 shadow-xl";
   
   const colors = {
-    green: "bg-emerald-500 hover:bg-emerald-600 text-white shadow-emerald-100",
-    yellow: "bg-amber-400 hover:bg-amber-500 text-amber-950 shadow-amber-50",
-    red: "bg-rose-500 hover:bg-rose-600 text-white shadow-rose-50"
+    green: "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-900/10",
+    yellow: "bg-amber-500 hover:bg-amber-600 text-white shadow-amber-900/10",
+    red: "bg-rose-600 hover:bg-rose-700 text-white shadow-rose-900/10"
   };
 
   return (
@@ -2192,13 +2215,15 @@ function ShiftButton({ color, label, icon, onClick, small, disabled }: { color: 
       whileTap={disabled ? {} : { scale: 0.96 }}
       onClick={disabled ? undefined : onClick}
       className={cn(
-        "rounded-2xl font-bold uppercase transition-all flex justify-center",
+        "rounded-[28px] font-black uppercase transition-all flex flex-col items-center justify-center p-6 border-b-4 border-black/10 tracking-widest",
         colors[color],
-        small ? "py-5 text-sm flex-col items-center gap-1" : "w-full py-5 text-lg items-center gap-3",
+        small ? "text-[10px] gap-2 min-h-[100px]" : "w-full text-sm gap-3 min-h-[120px]",
         baseClasses
       )}
     >
-      {icon}
+      <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-md">
+        {icon}
+      </div>
       <span>{label}</span>
     </motion.button>
   );
@@ -2240,25 +2265,23 @@ function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) 
     }
 
     try {
-      const q = query(
-        collection(db, 'tasks'),
-        where('frecuencia', '==', filter),
-        orderBy('createdAt', 'desc'),
-        limit(pageSize)
-      );
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('*')
+        .eq('frecuencia', filter)
+        .order('created_at', { ascending: false })
+        .range(pageNum * pageSize, (pageNum + 1) * pageSize - 1);
       
-      const querySnapshot = await getDocs(q);
-      const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      if (error) throw error;
         
       if (isInitial) {
-        setTasks(data);
+        setTasks(data || []);
       } else {
-        setTasks(prev => [...prev, ...data]);
+        setTasks(prev => [...prev, ...(data || [])]);
       }
-      setHasMore(data.length === pageSize);
+      setHasMore((data || []).length === pageSize);
     } catch (err) {
       console.error(err);
-      handleFirestoreError(err, OperationType.LIST, 'tasks');
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -2321,14 +2344,14 @@ function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) 
     const newTask: any = { 
       titulo: newTaskTitle.trim(), 
       frecuencia: newTaskFreq,
-      tipoLimpieza: newTaskType,
+      tipo_limpieza: newTaskType,
       descripcion: newTaskDesc || null,
-      fecha_vencimiento: newTaskDate || null,
-      createdAt: serverTimestamp()
+      fecha_vencimiento: newTaskDate || null
     };
     
     try {
-      const docRef = await addDoc(collection(db, 'tasks'), newTask);
+      const { data: docRef, error } = await supabase.from('tasks').insert(newTask).select().single();
+      if (error) throw error;
       setTasks([{ id: docRef.id, ...newTask } as any, ...tasks]);
       setIsCreating(false);
       setNewTaskTitle('');
@@ -2336,7 +2359,6 @@ function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) 
       setNewTaskDate('');
     } catch (error) {
       console.error('Error al crear la tarea:', error);
-      handleFirestoreError(error, OperationType.CREATE, 'tasks');
     }
   };
 
@@ -2629,15 +2651,15 @@ function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) 
 // -- Login Screen --
 
 const DEFAULT_USERS = [
-  { nombre: 'Abel Supervisor', usuario: 'ABEL', rol: 'supervisor', defaultPin: '1' },
-  { nombre: 'Walter Medina', usuario: 'WALTER', rol: 'supervisor', defaultPin: '1211' },
-  { nombre: 'Claudia', usuario: 'CLAUDIA', rol: 'operario', defaultPin: '1234' },
-  { nombre: 'Angie', usuario: 'ANGIE', rol: 'operario', defaultPin: '1234' },
-  { nombre: 'Florencia', usuario: 'FLORENCIA', rol: 'operario', defaultPin: '1234' },
-  { nombre: 'Mario', usuario: 'MARIO', rol: 'operario', defaultPin: '1234' },
-  { nombre: 'Jose', usuario: 'JOSE', rol: 'operario', defaultPin: '1234' },
-  { nombre: 'Raul', usuario: 'RAUL', rol: 'operario', defaultPin: '1234' },
-  { nombre: 'Nicolas', usuario: 'NICOLAS', rol: 'operario', defaultPin: '1234' },
+  { nombre: 'ABEL', usuario: 'ABEL', rol: 'supervisor', defaultPin: '1' },
+  { nombre: 'WALTER', usuario: 'WALTER', rol: 'supervisor', defaultPin: '1211' },
+  { nombre: 'CLAUDIA', usuario: 'CLAUDIA', rol: 'operario', defaultPin: '1234' },
+  { nombre: 'ANGIE', usuario: 'ANGIE', rol: 'operario', defaultPin: '1234' },
+  { nombre: 'FLORENCIA', usuario: 'FLORENCIA', rol: 'operario', defaultPin: '1234' },
+  { nombre: 'MARIO', usuario: 'MARIO', rol: 'operario', defaultPin: '1234' },
+  { nombre: 'JOSE', usuario: 'JOSE', rol: 'operario', defaultPin: '1234' },
+  { nombre: 'RAUL', usuario: 'RAUL', rol: 'operario', defaultPin: '1234' },
+  { nombre: 'NICOLAS', usuario: 'NICOLAS', rol: 'operario', defaultPin: '1234' },
 ];
 
 function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: string) => void, installProps: any }) {
@@ -2645,57 +2667,7 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
   const [pin, setPin] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [geoStatus, setGeoStatus] = useState<'checking' | 'allowed' | 'denied' | 'outside'>('checking');
-  const [userCoords, setUserCoords] = useState<{ lat: number, lng: number } | null>(null);
 
-  const [changingPinFor, setChangingPinFor] = useState<{usuario: string, userData: any} | null>(null);
-  const [newPinFromUser, setNewPinFromUser] = useState('');
-
-  const TARGET_LAT = -26.832961; 
-  const TARGET_LNG = -65.203290;
-  const ALLOWED_RADIUS_METERS = 300;
-
-  useEffect(() => {
-    if (!navigator.geolocation) {
-      setGeoStatus('denied');
-      setError('La geolocalización no es compatible con su navegador.');
-      return;
-    }
-
-    const watchId = navigator.geolocation.watchPosition(
-      (position) => {
-        const { latitude, longitude } = position.coords;
-        setUserCoords({ lat: latitude, lng: longitude });
-        const distance = calculateDistance(latitude, longitude, TARGET_LAT, TARGET_LNG);
-        if (distance <= ALLOWED_RADIUS_METERS) {
-          setGeoStatus('allowed');
-          setError('');
-        } else {
-          setGeoStatus('outside');
-        }
-      },
-      () => {
-        setGeoStatus('denied');
-        setError('Debe habilitar la ubicación para registrar su entrada.');
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    );
-    return () => navigator.geolocation.clearWatch(watchId);
-  }, []);
-
-  const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
-    "Notification" in window ? Notification.permission : "denied"
-  );
-
-  const requestNotifPermission = async () => {
-    if ("Notification" in window) {
-      const permission = await Notification.requestPermission();
-      setNotifPermission(permission);
-    }
-  };
-
-  const needsNotifAction = notifPermission === "default";
-  
   // Allow clicking buttons if not loading, validation happens inside handlers
   const isButtonEnabled = !loading;
 
@@ -2705,161 +2677,62 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
     setLoading(true);
     setError('');
     try {
-      if (!auth.currentUser) {
-        try {
-          await signInAnonymously(auth);
-        } catch (e: any) {
-          if (e.code === 'auth/admin-restricted-operation') {
-            throw new Error('CONFIGURACIÓN REQUERIDA: Debes activar el proveedor de acceso "Anónimo" en la consola de Firebase > Authentication > Sign-in method.');
-          }
-          throw e; // re-throw other auth errors
-        }
-      }
-      const q = query(collection(db, 'users'), where('usuario', '==', usuario.trim().toUpperCase()));
-      const querySnapshot = await getDocs(q);
-      
-      let userData: any = null;
-      let userId: string = '';
-
       const u = usuario.trim().toUpperCase();
+      const loginId = u.toLowerCase();
 
-      if (querySnapshot.empty) {
-        // Not in firestore yet, check default users map
+      let { data: userData, error: fetchError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', loginId)
+        .single();
+      
+      if (fetchError || !userData) {
+        // Not in database yet, check default users map
         const defaultUser = DEFAULT_USERS.find(d => d.usuario === u && d.defaultPin === pin.trim());
         if (defaultUser) {
-          // Success with default pin. Require change.
-          setChangingPinFor({ usuario: u, userData: { nombre: defaultUser.nombre, usuario: defaultUser.usuario, rol: defaultUser.rol } });
-          setLoading(false);
-          return;
+          // Create user in DB and let them login
+          const newUserId = loginId;
+          const newUserData = { 
+            id: newUserId,
+            nombre: defaultUser.nombre,
+            usuario: defaultUser.usuario,
+            pin: defaultUser.defaultPin,
+            rol: defaultUser.rol,
+            activo: true
+          };
+          
+          const { error: upsertError } = await supabase.from('users').upsert(newUserData);
+          if (upsertError) {
+            console.error("Upsert user error:", upsertError);
+            throw new Error(`Error BD al inicializar: ${upsertError.message}`);
+          }
+          
+          userData = newUserData;
         } else {
           throw new Error('Usuario o PIN incorrectos.');
         }
       } else {
-        // Exists in firestore
-        const fsDoc = querySnapshot.docs[0];
-        const fsData = fsDoc.data();
-        if (fsData.pin !== pin.trim()) {
+        // Exists in DB
+        if (userData.pin !== pin.trim()) {
           throw new Error('Usuario o PIN incorrectos.');
-        }
-        userData = fsData;
-        userId = fsDoc.id;
-      }
-
-      // Try to sync with auth uid for rules
-      if (auth.currentUser) {
-        try {
-          await setDoc(doc(db, 'users', auth.currentUser.uid), {
-            ...userData,
-            uid: auth.currentUser.uid,
-            originalDocId: userId
-          }, { merge: true });
-        } catch (e) {
-          console.warn("Could not sync auth user doc for rules:", e);
         }
       }
 
       // Check permissions based on role
       const isSupervisor = userData.rol === 'supervisor';
-      if (!isSupervisor && userData.rol === 'operario') {
-        if (geoStatus !== 'allowed') {
-          throw new Error('Los operarios deben estar en el rango de la empresa para ingresar.');
-        }
-      }
+      // if (!isSupervisor && userData.rol === 'operario') {
+      //   if (geoStatus !== 'allowed') {
+      //     throw new Error('Los operarios deben estar en el rango de la empresa para ingresar.');
+      //   }
+      // }
 
-      if (notifPermission !== 'granted' && "Notification" in window) {
-        try {
-          const perm = await Notification.requestPermission();
-          setNotifPermission(perm);
-          if (perm === 'denied') {
-            throw new Error('Debe habilitar las notificaciones para ingresar.');
-          }
-        } catch (e: any) {
-          if (e.message.includes('notificaciones')) throw e;
-          console.warn("Notification error:", e);
-        }
-      }
-
-      onLogin({ ...userData, id: userId } as any, getArgentinaDate());
+      onLogin({ ...userData, id: loginId } as any, getArgentinaDate());
     } catch (err: any) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
   };
-
-  const handlePinChangeSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newPinFromUser.trim() || newPinFromUser.length < 4) {
-      setError('El PIN debe tener al menos 4 caracteres.');
-      return;
-    }
-    if (!changingPinFor) return;
-
-    setLoading(true);
-    setError('');
-    try {
-      if (!auth.currentUser) {
-        try {
-          await signInAnonymously(auth);
-        } catch (e: any) {
-          if (e.code === 'auth/admin-restricted-operation') {
-            throw new Error('CONFIGURACIÓN REQUERIDA: Debes activar el proveedor de acceso "Anónimo" en Firebase > Authentication.');
-          }
-          throw e;
-        }
-      }
-      
-      const newUserId = changingPinFor.usuario.toLowerCase();
-      const newUserData = { ...changingPinFor.userData, pin: newPinFromUser.trim() };
-      
-      await setDoc(doc(db, 'users', newUserId), newUserData);
-
-      if (auth.currentUser) {
-        try {
-          await setDoc(doc(db, 'users', auth.currentUser.uid), {
-            ...newUserData,
-            uid: auth.currentUser.uid,
-            originalDocId: newUserId
-          }, { merge: true });
-        } catch (e) {
-          console.warn("Could not sync auth user doc for rules:", e);
-        }
-      }
-
-      // Check permissions based on role
-      const isSupervisor = newUserData.rol === 'supervisor';
-      if (!isSupervisor && newUserData.rol === 'operario') {
-        if (geoStatus !== 'allowed') {
-          throw new Error('Los operarios deben estar en el rango de la empresa para ingresar.');
-        }
-      }
-
-      if (notifPermission !== 'granted' && "Notification" in window) {
-        try {
-          const perm = await Notification.requestPermission();
-          setNotifPermission(perm);
-        } catch (e: any) {
-          console.warn("Notification error:", e);
-        }
-      }
-
-      onLogin({ ...newUserData, id: newUserId } as any, getArgentinaDate());
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
-    const R = 6371e3;
-    const φ1 = lat1 * Math.PI/180;
-    const φ2 = lat2 * Math.PI/180;
-    const Δφ = (lat2-lat1) * Math.PI/180;
-    const Δλ = (lon2-lon1) * Math.PI/180;
-    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) * Math.sin(Δλ/2);
-    return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
-  }
 
   return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
@@ -2883,86 +2756,31 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
           </div>
           <h1 className="text-2xl font-black text-[#0b3464] tracking-tight">Acceso Corporativo</h1>
           <p className="text-slate-400 text-[10px] font-bold uppercase tracking-[0.3em] mt-1">Gestión de Higiene - Arévalo</p>
-          
-          <div className="mt-4 flex flex-col gap-2 items-center">
-            <div className="flex justify-center">
-              {geoStatus === 'checking' && <div className="text-blue-500 font-bold text-[9px] uppercase tracking-widest bg-blue-50 px-3 py-1 rounded-full animate-pulse">Verificando GPS...</div>}
-              {geoStatus === 'allowed' && <div className="text-emerald-600 font-bold text-[9px] uppercase tracking-widest bg-emerald-50 px-3 py-1 rounded-full flex items-center gap-1"><MapPin className="w-3 h-3" /> GPS en Rango</div>}
-              {geoStatus === 'outside' && <div className="text-rose-600 font-bold text-[9px] uppercase tracking-widest bg-rose-50 px-3 py-1 rounded-full flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Fuera de Zona</div>}
-              {geoStatus === 'denied' && <div className="text-rose-600 font-bold text-[9px] uppercase tracking-widest bg-rose-50 px-3 py-1 rounded-full flex items-center gap-1"><ShieldAlert className="w-3 h-3" /> GPS Requerido</div>}
-            </div>
-
-            {needsNotifAction && (
-              <button 
-                onClick={requestNotifPermission}
-                className="flex items-center gap-2 text-amber-600 font-bold text-[9px] uppercase tracking-widest bg-amber-50 px-3 py-1 rounded-full border border-amber-200 animate-bounce"
-              >
-                <Bell className="w-3 h-3" /> Tocar para Activar Notificaciones
-              </button>
-            )}
-            {notifPermission === 'granted' && (
-              <div className="text-emerald-600 font-bold text-[9px] uppercase tracking-widest bg-emerald-50 px-3 py-1 rounded-full flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" /> Alertas Activas
-              </div>
-            )}
-          </div>
         </div>
 
         <div className="flex flex-col gap-4">
           {error && <div className="bg-red-50 text-red-600 text-[10px] p-3 rounded-2xl font-bold border border-red-100 flex items-start gap-2"><ShieldAlert className="w-4 h-4 shrink-0" /><p>{error}</p></div>}
           
-          {changingPinFor ? (
-            <form onSubmit={handlePinChangeSubmit} className="flex flex-col gap-4">
-              <div className="bg-amber-50 p-4 rounded-3xl border border-amber-100 mb-2">
-                <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest text-center leading-relaxed">
-                  Hola {changingPinFor.userData.nombre},
-                  como es tu primer ingreso, debes cambiar tu PIN por seguridad.
-                </p>
+          <form onSubmit={handlePinLogin} className="flex flex-col gap-4">
+            <div className="relative group">
+              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">Usuario</label>
+              <div className="relative">
+                <UserCircle className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
+                <input type="text" value={usuario} onChange={e => setUsuario(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-5 py-3.5 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 transition-all" placeholder="USUARIO" />
               </div>
-
-              <div className="relative group">
-                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">NUEVO PIN</label>
-                <div className="relative">
-                  <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
-                  <input type="password" value={newPinFromUser} onChange={e => setNewPinFromUser(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-5 py-3.5 text-center text-xl font-bold tracking-[0.5em] font-mono outline-none focus:border-blue-500 transition-all" placeholder="****" />
-                </div>
-              </div>
-
-              <button disabled={loading} type="submit" className={cn("w-full py-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2", isButtonEnabled ? "bg-[#0b3464] text-white hover:bg-[#0d417a]" : "bg-slate-200 text-slate-400")}>
-                {loading ? <RefreshCcw className="w-5 h-5 animate-spin" /> : <>Guardar y Entrar <MoveRight className="w-4 h-4" /></>}
-              </button>
-            </form>
-          ) : (
-            <form onSubmit={handlePinLogin} className="flex flex-col gap-4">
-              <div className="relative group">
-                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">Usuario</label>
-                <div className="relative">
-                  <UserCircle className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
-                  <input type="text" value={usuario} onChange={e => setUsuario(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-5 py-3.5 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 transition-all" placeholder="USUARIO" />
-                </div>
-              </div>
-              <div className="relative group">
-                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">PIN</label>
-                <div className="relative">
-                  <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
-                  <input type="password" value={pin} onChange={e => setPin(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-5 py-3.5 text-center text-xl font-bold tracking-[0.5em] font-mono outline-none focus:border-blue-500 transition-all" placeholder="****" />
-                </div>
-              </div>
-
-              <button disabled={loading} type="submit" className={cn("w-full py-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2", isButtonEnabled ? "bg-[#0b3464] text-white hover:bg-[#0d417a]" : "bg-slate-200 text-slate-400")}>
-                {loading ? <RefreshCcw className="w-5 h-5 animate-spin" /> : <>Ingresar <MoveRight className="w-4 h-4" /></>}
-              </button>
-            </form>
-          )}
-          
-          {(geoStatus !== 'allowed' || notifPermission !== 'granted') && (
-            <div className="bg-rose-50 p-4 rounded-3xl border border-rose-100">
-               <p className="text-[9px] font-black text-rose-500 uppercase tracking-widest text-center leading-relaxed">
-                 {geoStatus !== 'allowed' && "• Se requiere GPS en rango de la empresa\n"}
-                 {notifPermission !== 'granted' && "• Debe habilitar las notificaciones para ingresar"}
-               </p>
             </div>
-          )}
+            <div className="relative group">
+              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">PIN</label>
+              <div className="relative">
+                <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
+                <input type="password" value={pin} onChange={e => setPin(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-5 py-3.5 text-center text-xl font-bold tracking-[0.5em] font-mono outline-none focus:border-blue-500 transition-all" placeholder="****" />
+              </div>
+            </div>
+
+            <button disabled={loading} type="submit" className={cn("w-full py-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2", isButtonEnabled ? "bg-[#0b3464] text-white hover:bg-[#0d417a]" : "bg-slate-200 text-slate-400")}>
+              {loading ? <RefreshCcw className="w-5 h-5 animate-spin" /> : <>Ingresar <MoveRight className="w-4 h-4" /></>}
+            </button>
+          </form>
         </div>
       </motion.div>
     </div>
@@ -2979,22 +2797,20 @@ function OperarioStockManager({ user }: { user: Operario }) {
     if (!solicitud.trim()) return;
     setEnviando(true);
     try {
-      await addDoc(collection(db, 'logs'), {
-        operarioId: user.id || 'unknown',
-        operario: user.nombre,
+      await supabase.from('logs').insert({
+        operario_id: user.id || 'unknown',
+        operario_nombre: user.nombre,
         accion: `Solicitud Insumos: ${solicitud}`,
         inicio: new Date().toISOString(),
         fin: new Date().toISOString(),
         duracion_minutos: 0,
-        comentario: solicitud,
-        estado: 'Pendiente', // For supervisor approval if needed
-        createdAt: serverTimestamp()
+        detalles: solicitud,
+        estado: 'Pendiente'
       });
       alert("Solicitud de insumos enviada al supervisor.");
       setSolicitud('');
     } catch (error) {
       console.error("Error al solicitar:", error);
-      handleFirestoreError(error, OperationType.CREATE, 'logs');
     }
     setEnviando(false);
   };
@@ -3029,37 +2845,42 @@ function SupervisorStockManager() {
   const [nuevaCant, setNuevaCant] = useState('');
 
   useEffect(() => {
-    // Insumos inventory
-    const unsubscribeInsumos = onSnapshot(collection(db, 'supplies'), (snapshot) => {
-      setInsumos(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
+    const fetchInsumos = async () => {
+      const { data } = await supabase.from('insumos').select('*');
+      setInsumos(data || []);
+    };
+    fetchInsumos();
+    const subInsumos = supabase.channel('realtime:insumos').on('postgres_changes', { event: '*', schema: 'public', table: 'insumos' }, fetchInsumos).subscribe();
 
-    // Pedidos (we'll filter logs that are requests and pending)
-    const q = query(collection(db, 'logs'), where('accion', '>=', 'Solicitud Insumos:'), where('estado', '==', 'Pendiente'));
-    const unsubscribePedidos = onSnapshot(q, (snapshot) => {
-      setPedidos(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
+    const fetchPedidos = async () => {
+      const { data } = await supabase
+        .from('logs')
+        .select('*')
+        .eq('estado', 'Pendiente')
+        .ilike('accion', 'Solicitud Insumos:%');
+      setPedidos(data || []);
+    };
+    fetchPedidos();
+    const subPedidos = supabase.channel('realtime:pedidos').on('postgres_changes', { event: '*', schema: 'public', table: 'logs' }, fetchPedidos).subscribe();
 
     return () => {
-      unsubscribeInsumos();
-      unsubscribePedidos();
+      supabase.removeChannel(subInsumos);
+      supabase.removeChannel(subPedidos);
     };
   }, []);
 
   const agregarInsumo = async () => {
     if (nuevoInsumo.trim() && !isNaN(Number(nuevaCant))) {
       try {
-        await addDoc(collection(db, 'supplies'), {
+        await supabase.from('insumos').insert({
           nombre: nuevoInsumo.trim(),
-          cantidad: Number(nuevaCant),
-          unidad: 'unidades',
-          stock_minimo: 5,
-          createdAt: serverTimestamp()
+          stock: Number(nuevaCant),
+          unidad: 'unidades'
         });
         setNuevoInsumo('');
         setNuevaCant('');
       } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, 'supplies');
+        console.error(error);
       }
     }
   };
@@ -3068,19 +2889,19 @@ function SupervisorStockManager() {
     const item = insumos.find(i => i.id === id);
     if (!item) return;
     try {
-      await updateDoc(doc(db, 'supplies', id), { 
-        cantidad: Math.max(0, item.cantidad + diff) 
-      });
+      await supabase.from('insumos').update({ 
+        stock: Math.max(0, item.stock + diff) 
+      }).eq('id', id);
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `supplies/${id}`);
+      console.error(error);
     }
   };
 
   const responderPedido = async (pedidoId: string, status: 'Aprobado' | 'Rechazado') => {
     try {
-      await updateDoc(doc(db, 'logs', pedidoId), { estado: status });
+      await supabase.from('logs').update({ estado: status }).eq('id', pedidoId);
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `logs/${pedidoId}`);
+      console.error(error);
     }
   };
 
@@ -3229,19 +3050,22 @@ function SupervisorTasksManager() {
     }
 
     try {
-      let q = query(collection(db, 'tasks'), orderBy('createdAt', 'desc'), limit(pageSize));
+      let query = supabase.from('tasks').select('*').order('created_at', { ascending: false }).range(pageNum * pageSize, (pageNum + 1) * pageSize - 1);
       
       if (frecuenciaFilter !== 'Todas') {
-        q = query(collection(db, 'tasks'), where('frecuencia', '==', frecuenciaFilter), orderBy('createdAt', 'desc'), limit(pageSize));
+        query = query.eq('frecuencia', frecuenciaFilter);
       }
       
       const [tasksRes, usersRes] = await Promise.all([
-        getDocs(q),
-        getDocs(collection(db, 'users'))
+        query,
+        supabase.from('users').select('*').order('nombre')
       ]);
 
-      const tasksData = tasksRes.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      const usersData = usersRes.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      if (tasksRes.error) throw tasksRes.error;
+      if (usersRes.error) throw usersRes.error;
+
+      const tasksData = tasksRes.data || [];
+      const usersData = usersRes.data || [];
         
       const mappedData = tasksData.map((t: any) => {
         let isCompletedToday = false;
@@ -3283,7 +3107,6 @@ function SupervisorTasksManager() {
       }
     } catch (err) {
       console.error(err);
-      handleFirestoreError(err, OperationType.LIST, 'tasks');
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -3350,21 +3173,21 @@ function SupervisorTasksManager() {
       fecha_vencimiento: newTaskDate || null,
       asignados: asignados.length > 0 ? asignados : null,
       duracion_estimada_minutos: duracionEst ? parseInt(duracionEst) : null,
-      updatedAt: serverTimestamp()
+      updated_at: new Date().toISOString()
     };
     
     try {
       if (editingId) {
-        await updateDoc(doc(db, 'tasks', editingId.toString()), taskPayload);
+        await supabase.from('tasks').update(taskPayload).eq('id', editingId);
         setTasks(tasks.map(t => t.id === editingId ? { ...t, ...taskPayload } : t));
       } else {
-        const docRef = await addDoc(collection(db, 'tasks'), { ...taskPayload, createdAt: serverTimestamp() });
-        setTasks([{ id: docRef.id, ...taskPayload, _estadoSimulado: 'Pendiente' }, ...tasks]);
+        const { data, error } = await supabase.from('tasks').insert(taskPayload).select().single();
+        if (error) throw error;
+        setTasks([{ ...data, _estadoSimulado: 'Pendiente' }, ...tasks]);
       }
       resetForm();
     } catch (error) {
       console.error('Error in handleCreateOrEditTask:', error);
-      handleFirestoreError(error, OperationType.WRITE, 'tasks');
     }
   };
 
@@ -3714,7 +3537,7 @@ function ActivityFeed({ registros }: { registros: any[] }) {
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex justify-between items-start gap-2">
-                <p className="text-sm font-bold text-slate-800 truncate">{reg.operario}</p>
+                <p className="text-sm font-bold text-slate-800 truncate">{reg.operario_nombre}</p>
                 <span className="text-[10px] text-slate-400 font-medium whitespace-nowrap">
                   {new Date(reg.inicio).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </span>
@@ -3739,7 +3562,7 @@ function DailySupervisorReport({ registros, operarios, tasks }: { registros: any
   
   const reportData = React.useMemo(() => {
     return operarios.filter(o => o.rol !== 'supervisor').map(op => {
-      const opsRecords = registros.filter(r => r.operario === op.nombre && new Date(r.inicio).toLocaleDateString('es-AR') === todayStr);
+      const opsRecords = registros.filter(r => r.operario_nombre === op.nombre && new Date(r.inicio).toLocaleDateString('es-AR') === todayStr);
       
       let horaIngreso = '-';
       let horaSalida = '-';
@@ -3853,11 +3676,11 @@ function JibbleHourReport({ registros, operarios, reportDateMode, setReportDateM
     
     registros.forEach((r: any) => {
       const date = new Date(r.inicio).toLocaleDateString('es-AR');
-      const key = `${r.operario}-${date}`;
+      const key = `${r.operario_nombre}-${date}`;
       
       if (!data[key]) {
         data[key] = {
-          operario: r.operario,
+          operario: r.operario_nombre,
           fecha: date,
           trabajo: 0,
           descanso: 0
@@ -4092,19 +3915,31 @@ function OperarioStatusGrid({ operarios, registros }: { operarios: any[], regist
       // Find the latest record for this operario in the current session (last 12h)
       const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
       const opLogs = registros
-        .filter(r => r.operario === op.nombre && r.inicio >= twelveHoursAgo)
+        .filter(r => r.operario_nombre === op.nombre && r.inicio >= twelveHoursAgo)
         .sort((a,b) => new Date(b.inicio).getTime() - new Date(a.inicio).getTime());
       
       const latest = opLogs[0];
       
-      if (!latest) return { ...op, status: 'offline', task: null };
+      if (!latest) return { ...op, status: 'offline', task: null, delayed: false };
       
+      // Check for delay if they just started (first log of the day includes "Turno")
+      let isDelayed = false;
+      if (latest.accion.includes('Turno') && !latest.fin && op.horario_entrada) {
+        const startHour = new Date(latest.inicio).getHours();
+        const startMin = new Date(latest.inicio).getMinutes();
+        const [targetHour, targetMin] = op.horario_entrada.split(':').map(Number);
+        
+        if (startHour > targetHour || (startHour === targetHour && startMin > targetMin + 5)) {
+          isDelayed = true;
+        }
+      }
+
       // If the latest record has no 'fin', they are active in that action
       if (!latest.fin) {
-        if (latest.accion.includes('Descanso')) return { ...op, status: 'rest', task: 'En Descanso' };
-        if (latest.accion.includes('Turno')) return { ...op, status: 'active', task: 'Disponible / Sin tarea' };
-        if (latest.accion.includes('Tarea:')) return { ...op, status: 'active', task: latest.accion.replace('Tarea: ', '') };
-        return { ...op, status: 'active', task: latest.accion };
+        if (latest.accion.includes('Descanso')) return { ...op, status: 'rest', task: 'En Descanso', delayed: isDelayed };
+        if (latest.accion.includes('Turno')) return { ...op, status: 'active', task: 'Disponible / Sin tarea', delayed: isDelayed };
+        if (latest.accion.includes('Tarea:')) return { ...op, status: 'active', task: latest.accion.replace('Tarea: ', ''), delayed: isDelayed };
+        return { ...op, status: 'active', task: latest.accion, delayed: isDelayed };
       }
       
       // If the latest record has 'fin', but it was a "Turno (Tramo)" or "Tarea" ending, they might be idle
@@ -4137,7 +3972,12 @@ function OperarioStatusGrid({ operarios, registros }: { operarios: any[], regist
               )}></div>
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-bold text-slate-800 truncate">{op.nombre}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-bold text-slate-800 truncate">{op.nombre}</p>
+                {op.delayed && (
+                  <span className="bg-rose-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded uppercase animate-pulse">Atrasado</span>
+                )}
+              </div>
               <div className="flex items-center gap-1.5 mt-0.5">
                 <span className={cn(
                   "text-[9px] font-black uppercase px-1.5 py-0.5 rounded",
@@ -4184,7 +4024,6 @@ function UserProfile({ user, onUpdate }: { user: Operario, onUpdate: (u: Operari
     setLoading(true);
     setMsg({ text: '', type: '' });
     try {
-      const userRef = doc(db, 'users', user.id!);
       const fullWhatsapp = '549' + cleanNumber;
       const updates = {
         nombre,
@@ -4193,7 +4032,7 @@ function UserProfile({ user, onUpdate }: { user: Operario, onUpdate: (u: Operari
         pin,
         whatsapp: fullWhatsapp
       };
-      await updateDoc(userRef, updates);
+      await supabase.from('users').update(updates).eq('id', user.id);
       onUpdate({ ...user, ...updates });
       setMsg({ text: 'Perfil actualizado con éxito', type: 'success' });
     } catch (err: any) {
@@ -4296,22 +4135,40 @@ function PersonalManagement() {
   const [editingUser, setEditingUser] = useState<Partial<Operario> | null>(null);
 
   useEffect(() => {
-    const q = query(collection(db, 'users'), orderBy('nombre', 'asc'));
-    const unsubscribe = onSnapshot(q, (snap) => {
-      setUsers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Operario)));
+    const fetchUsers = async () => {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .order('nombre', { ascending: true });
+      
+      if (error) {
+        console.error('Error fetching users:', error);
+      } else {
+        setUsers(data as Operario[]);
+      }
       setLoading(false);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'users');
-    });
-    return () => unsubscribe();
+    };
+
+    fetchUsers();
+
+    // Setup real-time listener
+    const channel = supabase
+      .channel('public:users')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => {
+        fetchUsers();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const toggleRole = async (user: Operario) => {
     if (!user.id) return;
-    const userRef = doc(db, 'users', user.id);
     const nextRole = user.rol === 'supervisor' ? 'operario' : 'supervisor';
     try {
-      await updateDoc(userRef, { rol: nextRole });
+      await supabase.from('users').update({ rol: nextRole }).eq('id', user.id);
     } catch (err) {
       console.error(err);
     }
@@ -4319,9 +4176,8 @@ function PersonalManagement() {
 
   const toggleActive = async (user: Operario) => {
     if (!user.id) return;
-    const userRef = doc(db, 'users', user.id);
     try {
-      await updateDoc(userRef, { activo: !user.activo });
+      await supabase.from('users').update({ activo: !user.activo }).eq('id', user.id);
     } catch (err) {
       console.error(err);
     }
@@ -4329,7 +4185,7 @@ function PersonalManagement() {
 
   const deleteUser = async (userId: string) => {
     try {
-      await deleteDoc(doc(db, 'users', userId));
+      await supabase.from('users').delete().eq('id', userId);
     } catch (err) {
       console.error(err);
     }
@@ -4339,20 +4195,25 @@ function PersonalManagement() {
     e.preventDefault();
     if (!editingUser) return;
     try {
-      const userData = {
-        ...editingUser,
-        usuario: editingUser.usuario?.trim().toUpperCase(),
+      const u = editingUser.usuario?.trim().toUpperCase();
+      const userData: any = {
+        nombre: editingUser.nombre,
+        usuario: u,
         pin: editingUser.pin?.trim(),
+        whatsapp: editingUser.whatsapp,
+        rol: editingUser.rol || 'operario',
+        horario_entrada: editingUser.horario_entrada || null,
+        horario_salida: editingUser.horario_salida || null
       };
       
       if (editingUser.id) {
-        await updateDoc(doc(db, 'users', editingUser.id), userData);
+        await supabase.from('users').update(userData).eq('id', editingUser.id);
       } else {
-        const customId = editingUser.usuario!.toLowerCase();
-        await setDoc(doc(db, 'users', customId), {
+        const customId = u!.toLowerCase();
+        await supabase.from('users').insert({
            ...userData,
-           activo: true,
-           rol: userData.rol || 'operario'
+           id: customId,
+           activo: true
         });
       }
       setEditingUser(null);
@@ -4502,6 +4363,26 @@ function PersonalManagement() {
                   className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3 outline-none focus:border-blue-500 font-mono text-lg"
                 />
               </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1 text-[10px] uppercase tracking-widest">Hora Entrada</label>
+                  <input 
+                    type="time"
+                    value={editingUser.horario_entrada || ''}
+                    onChange={e => setEditingUser({...editingUser, horario_entrada: e.target.value})}
+                    className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3 outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1 text-[10px] uppercase tracking-widest">Hora Salida</label>
+                  <input 
+                    type="time"
+                    value={editingUser.horario_salida || ''}
+                    onChange={e => setEditingUser({...editingUser, horario_salida: e.target.value})}
+                    className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3 outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
               {!editingUser.id && (
                 <div>
                   <label className="block text-xs font-bold text-slate-500 mb-1">Rol</label>
@@ -4528,7 +4409,10 @@ function PersonalManagement() {
 }
 
 function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario, onLogout: () => void, onUserUpdate: (u: Operario) => void }) {
-  const [tab, setTab] = useState<'dashboard' | 'tareas' | 'reportes' | 'stock' | 'turnos' | 'incidencias' | 'anuncios' | 'metricas' | 'personal' | 'perfil'>('dashboard');
+  const installProps = usePWAInstall();
+  const [showPWAHelp, setShowPWAHelp] = useState(false);
+  const [tab, setTab] = useState<'dashboard' | 'gestion' | 'analitica' | 'incidencias' | 'config'>('dashboard');
+  const [subTab, setSubTab] = useState<string>('general');
   const [registros, setRegistros] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -4545,88 +4429,86 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
   };
 
   useEffect(() => {
-    // Real-time subscription for live activity feed using onSnapshot
-    const q = query(collection(db, 'logs'), orderBy('createdAt', 'desc'), limit(100));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const logs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setRegistros(logs);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'logs');
-    });
-
-    return () => unsubscribe();
+    const fetchLogs = async () => {
+      const { data, error } = await supabase
+        .from('logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (error) console.error(error);
+      else setRegistros(data || []);
+    };
+    fetchLogs();
+    const channel = supabase.channel('realtime:logs-report').on('postgres_changes', { event: '*', schema: 'public', table: 'logs' }, fetchLogs).subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
   useEffect(() => {
     async function fetchData() {
       setLoading(true);
       
-      // Basic data needed for dashboard
       const fetchOps = async () => {
         if (operarios.length === 0) {
           try {
-            const querySnapshot = await getDocs(collection(db, 'users'));
-            const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setOperarios(data);
+            const { data } = await supabase.from('users').select('*').order('nombre');
+            setOperarios(data || []);
           } catch (error) {
-            handleFirestoreError(error, OperationType.LIST, 'users');
+            console.error(error);
           }
         }
       };
 
       const fetchTasks = async () => {
         try {
-          const querySnapshot = await getDocs(collection(db, 'tasks'));
-          const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          setTasks(data);
+          const { data } = await supabase.from('tasks').select('*').order('created_at', { ascending: false });
+          setTasks(data || []);
         } catch (error) {
-          handleFirestoreError(error, OperationType.LIST, 'tasks');
+          console.error(error);
         }
       };
       
       const fetchStock = async () => {
         try {
-          const querySnapshot = await getDocs(collection(db, 'supplies'));
-          const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          setStock(data);
+          const { data } = await supabase.from('insumos').select('*');
+          setStock(data || []);
         } catch (error) {
-          handleFirestoreError(error, OperationType.LIST, 'supplies');
+          console.error(error);
         }
       };
 
       if (tab === 'reportes' || tab === 'dashboard') {
-        let q = query(collection(db, 'logs'), orderBy('inicio', 'desc'));
+        let query = supabase.from('logs').select('*').order('inicio', { ascending: false });
         
         let startDate = new Date();
         if (reportDateMode === 'vivo') {
           startDate.setHours(startDate.getHours() - 12);
-          q = query(collection(db, 'logs'), where('inicio', '>=', startDate.toISOString()), orderBy('inicio', 'desc'), limit(200));
+          query = query.gte('inicio', startDate.toISOString()).limit(200);
         } else if (reportDateMode === 'dia') {
           startDate.setHours(0,0,0,0);
-          q = query(collection(db, 'logs'), where('inicio', '>=', startDate.toISOString()), orderBy('inicio', 'desc'));
+          query = query.gte('inicio', startDate.toISOString());
         } else if (reportDateMode === 'semana') {
           startDate.setDate(startDate.getDate() - 7);
-          q = query(collection(db, 'logs'), where('inicio', '>=', startDate.toISOString()), orderBy('inicio', 'desc'));
+          query = query.gte('inicio', startDate.toISOString());
         } else if (reportDateMode === 'mes') {
           startDate.setMonth(startDate.getMonth() - 1);
-          q = query(collection(db, 'logs'), where('inicio', '>=', startDate.toISOString()), orderBy('inicio', 'desc'));
+          query = query.gte('inicio', startDate.toISOString());
         }
 
         try {
-          const [regSnapshot] = await Promise.all([
-            getDocs(q),
+          const [{ data: logsData }, _ops, _tasks, _stock] = await Promise.all([
+            query,
             fetchOps(),
             fetchTasks(),
             fetchStock()
           ]);
           
-          let finalData: any[] = regSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          let finalData = logsData || [];
           if (reportUserFilter !== 'Todos') {
-            finalData = finalData.filter(d => d.operario === reportUserFilter);
+            finalData = finalData.filter(d => d.operario_nombre === reportUserFilter);
           }
           setRegistros(finalData);
         } catch (error) {
-          handleFirestoreError(error, OperationType.LIST, 'logs');
+          console.error(error);
         }
       } else {
         await Promise.all([fetchOps(), fetchTasks(), fetchStock()]);
@@ -4640,12 +4522,12 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
   const metrics = React.useMemo(() => {
     if (!registros) return { totalMinutes: 0, avgTask: 0, activeNow: 0 };
     const totalMinutes = registros.reduce((acc, r) => acc + (r.duracion_minutos || 0), 0);
-    const completedTasks = registros.filter(r => r.accion && !r.accion.includes('Turno') && !r.accion.includes('Descanso')).length;
+    const completedTasks = registros.filter(r => r.accion && !r.accion.includes('Turno') && !r.accion.includes('Descanso') && !r.accion.startsWith('Inicio') && !r.accion.startsWith('Fin') && !r.accion.includes('Sesión')).length;
     const activeOps = new Set(registros.filter(r => {
       const now = new Date();
       const startTime = new Date(r.inicio);
       return !r.fin && (now.getTime() - startTime.getTime() < 12 * 60 * 60 * 1000); // Simple "still active" check if no end time and recent
-    }).map(r => r.operario)).size;
+    }).map(r => r.operario_nombre)).size;
 
     return {
       totalHours: (totalMinutes / 60).toFixed(1),
@@ -4657,6 +4539,7 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-800">
+      <PWAHelpModal isOpen={showPWAHelp} onClose={() => setShowPWAHelp(false)} installProps={installProps} />
       
       {/* SIDE MENU OVERLAY (SUPERVISOR) */}
       <AnimatePresence>
@@ -4695,103 +4578,56 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
                 <button 
                   onClick={() => { setTab('dashboard'); setMenuOpen(false); }}
                   className={cn(
-                    "flex items-center gap-4 px-5 py-4 rounded-2xl font-bold transition-all",
-                    tab === 'dashboard' ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"
+                    "flex items-center gap-4 px-5 py-3.5 rounded-2xl font-bold transition-all",
+                    tab === 'dashboard' ? "bg-blue-600 text-white shadow-lg shadow-blue-100" : "text-slate-500 hover:bg-slate-50"
                   )}
                 >
                   <ShieldAlert className="w-6 h-6" />
                   <span>Panel General</span>
                 </button>
+                
                 <button 
-                  onClick={() => { setTab('incidencias'); setMenuOpen(false); }}
+                  onClick={() => { setTab('gestion'); setSubTab('tareas'); setMenuOpen(false); }}
                   className={cn(
-                    "flex items-center gap-4 px-5 py-4 rounded-2xl font-bold transition-all",
-                    tab === 'incidencias' ? "bg-rose-50 text-rose-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"
-                  )}
-                >
-                  <AlertTriangle className="w-6 h-6" />
-                  <span>Incidencias / Tickets</span>
-                </button>
-
-                <button 
-                  onClick={() => { setTab('anuncios'); setMenuOpen(false); }}
-                  className={cn(
-                    "flex items-center gap-4 px-5 py-4 rounded-2xl font-bold transition-all",
-                    tab === 'anuncios' ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"
-                  )}
-                >
-                  <Megaphone className="w-6 h-6" />
-                  <span>Comunicados</span>
-                </button>
-                <button 
-                  onClick={() => { setTab('metricas'); setMenuOpen(false); }}
-                  className={cn(
-                    "flex items-center gap-4 px-5 py-4 rounded-2xl font-bold transition-all",
-                    tab === 'metricas' ? "bg-amber-50 text-amber-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"
-                  )}
-                >
-                  <BarChart2 className="w-6 h-6" />
-                  <span>Productividad</span>
-                </button>
-                <button 
-                  onClick={() => { setTab('reportes'); setMenuOpen(false); }}
-                  className={cn(
-                    "flex items-center gap-4 px-5 py-4 rounded-2xl font-bold transition-all",
-                    tab === 'reportes' ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"
-                  )}
-                >
-                  <FileText className="w-6 h-6" />
-                  <span>Reportes / Horas</span>
-                </button>
-                <button 
-                  onClick={() => { setTab('tareas'); setMenuOpen(false); }}
-                  className={cn(
-                    "flex items-center gap-4 px-5 py-4 rounded-2xl font-bold transition-all",
-                    tab === 'tareas' ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"
+                    "flex items-center gap-4 px-5 py-3.5 rounded-2xl font-bold transition-all",
+                    tab === 'gestion' ? "bg-blue-600 text-white shadow-lg shadow-blue-100" : "text-slate-500 hover:bg-slate-50"
                   )}
                 >
                   <ClipboardList className="w-6 h-6" />
-                  <span>Gestor Tareas</span>
+                  <span>Gestión Operativa</span>
                 </button>
+
                 <button 
-                  onClick={() => { setTab('turnos'); setMenuOpen(false); }}
+                  onClick={() => { setTab('incidencias'); setMenuOpen(false); }}
                   className={cn(
-                    "flex items-center gap-4 px-5 py-4 rounded-2xl font-bold transition-all",
-                    tab === 'turnos' ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"
+                    "flex items-center gap-4 px-5 py-3.5 rounded-2xl font-bold transition-all",
+                    tab === 'incidencias' ? "bg-rose-600 text-white shadow-lg shadow-rose-100" : "text-slate-500 hover:bg-slate-50"
                   )}
                 >
-                  <Calendar className="w-6 h-6" />
-                  <span>Gestión Turnos</span>
+                  <AlertTriangle className="w-6 h-6" />
+                  <span>Incidencias</span>
                 </button>
+
                 <button 
-                  onClick={() => { setTab('personal'); setMenuOpen(false); }}
+                  onClick={() => { setTab('analitica'); setSubTab('diario'); setMenuOpen(false); }}
                   className={cn(
-                    "flex items-center gap-4 px-5 py-4 rounded-2xl font-bold transition-all",
-                    tab === 'personal' ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"
+                    "flex items-center gap-4 px-5 py-3.5 rounded-2xl font-bold transition-all",
+                    tab === 'analitica' ? "bg-blue-600 text-white shadow-lg shadow-blue-100" : "text-slate-500 hover:bg-slate-50"
                   )}
                 >
-                  <Users className="w-6 h-6" />
-                  <span>Personal</span>
+                  <BarChart2 className="w-6 h-6" />
+                  <span>Reportes y Analítica</span>
                 </button>
+
                 <button 
-                  onClick={() => { setTab('perfil'); setMenuOpen(false); }}
+                  onClick={() => { setTab('config'); setSubTab('anuncios'); setMenuOpen(false); }}
                   className={cn(
-                    "flex items-center gap-4 px-5 py-4 rounded-2xl font-bold transition-all",
-                    tab === 'perfil' ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"
+                    "flex items-center gap-4 px-5 py-3.5 rounded-2xl font-bold transition-all",
+                    tab === 'config' ? "bg-blue-600 text-white shadow-lg shadow-blue-100" : "text-slate-500 hover:bg-slate-50"
                   )}
                 >
-                  <UserCircle className="w-6 h-6" />
-                  <span>Mi Perfil</span>
-                </button>
-                <button 
-                  onClick={() => { setTab('stock'); setMenuOpen(false); }}
-                  className={cn(
-                    "flex items-center gap-4 px-5 py-4 rounded-2xl font-bold transition-all",
-                    tab === 'stock' ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"
-                  )}
-                >
-                  <Plus className="w-6 h-6" />
-                  <span>Control Stock</span>
+                  <Settings className="w-6 h-6" />
+                  <span>Configuración</span>
                 </button>
                 
                 <div className="my-6 border-t border-slate-100" />
@@ -4847,6 +4683,15 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
 
       <div className="p-4 sm:p-8 flex-1 max-w-5xl mx-auto w-full flex flex-col gap-6">
         
+        {user.pin && ['1', '1211', '1234'].includes(user.pin) && (
+          <div className="bg-amber-100/50 p-4 rounded-2xl border border-amber-200">
+             <p className="text-amber-800 text-xs font-bold leading-relaxed flex items-start gap-2">
+               <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5" />
+               Tu PIN actual es el de por defecto. Para mayor seguridad, te recomendamos cambiarlo desde la sección "Mi Perfil".
+             </p>
+          </div>
+        )}
+
         {/* TAB CONTENT (Controlled by Sidebar Menu) */}
         {tab === 'dashboard' && (
           <div className="flex flex-col gap-6">
@@ -4858,138 +4703,96 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
               <KPICard title="Eficacia Media" value={metrics.avgTask + 'm'} icon={<RefreshCcw className="w-5 h-5 text-indigo-500"/>} sub="Min/Tarea" />
             </div>
 
-            {/* FILTERS FOR DASHBOARD */}
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 flex flex-wrap gap-4 items-center justify-between">
-               <div className="flex bg-slate-100 p-1 rounded-xl">
-                  {['vivo', 'dia', 'semana', 'mes'].map(m => (
-                    <button 
-                      key={m}
-                      onClick={() => setReportDateMode(m as any)}
-                      className={cn("px-4 py-1.5 text-xs font-bold rounded-lg capitalize", reportDateMode === m ? "bg-white shadow-sm text-blue-600" : "text-slate-500")}
-                    >
-                      {m === 'vivo' ? 'En Vivo' : m === 'dia' ? 'Hoy' : m === 'semana' ? 'Semana' : 'Mes'}
-                    </button>
-                  ))}
-               </div>
-               <div className="text-xs text-slate-400 font-medium">
-                  Datos actualizados: {new Date().toLocaleTimeString()}
-               </div>
-            </div>
-
             <OperarioStatusGrid operarios={operarios} registros={registros} />
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-               {/* BAR CHART: HOURS PER WORKER */}
-               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col">
-                  <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2 shrink-0">
-                    <UserCircle className="w-5 h-5 text-blue-500" /> Horas por Operario
-                  </h3>
-                  <div className="h-[250px] w-full flex-1">
-                    <ResponsiveContainer width="100%" height="100%" minHeight={1} minWidth={1}>
-                      <BarChart data={
-                        operarios.map(op => ({
-                          name: op.nombre,
-                          horas: parseFloat((registros.filter(r => r.operario === op.nombre).reduce((acc, r) => acc + (r.duracion_minutos || 0), 0) / 60).toFixed(1))
-                        })).filter(d => d.horas > 0).sort((a,b) => b.horas - a.horas)
-                      }>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#64748b'}} />
-                        <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#64748b'}} />
-                        <Tooltip 
-                          contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
-                          cursor={{fill: '#f8fafc'}}
-                        />
-                        <Bar dataKey="horas" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={30} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-               </div>
-
-               {/* REAL-TIME ACTIVITY FEED */}
                <ActivityFeed registros={registros} />
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-               {/* PIE CHART: TASK STATUS */}
-               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-                  <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2">
-                    <ClipboardList className="w-5 h-5 text-emerald-500" /> Resumen de Tareas
-                  </h3>
-                  <div className="h-[250px] w-full flex flex-col items-center">
-                    <ResponsiveContainer width="100%" height="100%" minHeight={1} minWidth={1}>
-                      <PieChart>
-                        <Pie
-                          data={[
-                            { name: 'Completadas', value: metrics.completedTasks },
-                            { name: 'Pendientes', value: tasks.length - metrics.completedTasks > 0 ? tasks.length - metrics.completedTasks : 2 } // Mock some pendings if none
-                          ]}
-                          innerRadius={60}
-                          outerRadius={80}
-                          paddingAngle={5}
-                          dataKey="value"
-                        >
-                          <Cell fill="#10b981" />
-                          <Cell fill="#f1f5f9" />
-                        </Pie>
-                        <Tooltip />
-                      </PieChart>
-                    </ResponsiveContainer>
-                    <div className="flex gap-4 text-xs font-bold -mt-4">
-                       <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-emerald-500"></span> Realizadas</span>
-                       <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-slate-200"></span> Pendientes</span>
-                    </div>
-                  </div>
-               </div>
-
-               {/* LOWER ROW: STOCK & RECENT ALERTS */}
                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
                   <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                    <Plus className="w-5 h-5 text-rose-500" /> Alertas de Insumos Críticos
+                    <Plus className="w-5 h-5 text-rose-500" /> Alertas Críticas
                   </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {stock.filter(s => s.cantidad < 5).map(s => (
+                  <div className="space-y-3">
+                    {stock.filter(s => s.stock < 5).map(s => (
                       <div key={s.id} className="flex items-center justify-between p-3 bg-rose-50 rounded-xl border border-rose-100">
                           <span className="text-sm font-bold text-slate-700">{s.nombre}</span>
-                          <span className="text-xs font-black text-rose-600 bg-white px-2 py-1 rounded-lg">Quedan {s.cantidad}</span>
+                          <span className="text-xs font-black text-rose-600 bg-white px-2 py-1 rounded-lg">Stock: {s.stock}</span>
                       </div>
                     ))}
-                    {stock.filter(s => s.cantidad < 5).length === 0 && <p className="text-slate-400 text-sm">No hay faltantes críticos.</p>}
+                    {stock.filter(s => s.stock < 5).length === 0 && <p className="text-slate-400 text-sm italic">Sin alertas detectadas.</p>}
                   </div>
                </div>
             </div>
-
           </div>
         )}
 
-        {tab === 'incidencias' && <SupervisorIncidentsLog />}
-        {tab === 'anuncios' && <SupervisorAnnouncements />}
-        {tab === 'metricas' && <SupervisorProductivityStats registros={registros} operarios={operarios} tasks={tasks} />}
-        {tab === 'reportes' && (
+        {tab === 'gestion' && (
           <div className="flex flex-col gap-6">
-            <DailySupervisorReport registros={registros} operarios={operarios} tasks={tasks} />
+            <div className="bg-white p-1.5 rounded-2xl border border-slate-200 flex gap-2 w-full max-w-md mx-auto sticky top-20 z-40 shadow-sm">
+              {['tareas', 'turnos', 'stock'].map(st => (
+                <button 
+                  key={st}
+                  onClick={() => setSubTab(st)}
+                  className={cn(
+                    "flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all",
+                    subTab === st ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:bg-slate-50"
+                  )}
+                >{st}</button>
+              ))}
+            </div>
+            {subTab === 'tareas' && <SupervisorTasksManager />}
+            {subTab === 'turnos' && <SupervisorShiftManager />}
+            {subTab === 'stock' && <SupervisorStockManager />}
           </div>
         )}
 
-        {tab === 'tareas' && (
-          <div className="w-full flex-1">
-             <SupervisorTasksManager />
+        {tab === 'analitica' && (
+          <div className="flex flex-col gap-6">
+            <div className="bg-white p-1.5 rounded-2xl border border-slate-200 flex gap-2 w-full max-w-md mx-auto sticky top-20 z-40 shadow-sm">
+              {['diario', 'historico', 'productividad'].map(st => (
+                <button 
+                  key={st}
+                  onClick={() => setSubTab(st)}
+                  className={cn(
+                    "flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all",
+                    subTab === st ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:bg-slate-50"
+                  )}
+                >{st}</button>
+              ))}
+            </div>
+            {subTab === 'diario' && <DailySupervisorReport registros={registros} operarios={operarios} tasks={tasks} />}
+            {subTab === 'historico' && (
+              <JibbleHourReport 
+                registros={registros} 
+                operarios={operarios} 
+                reportDateMode={reportDateMode} 
+                setReportDateMode={setReportDateMode} 
+                reportUserFilter={reportUserFilter} 
+                setReportUserFilter={setReportUserFilter}
+                loading={loading}
+              />
+            )}
+            {subTab === 'productividad' && <SupervisorProductivityStats registros={registros} operarios={operarios} tasks={tasks} />}
           </div>
         )}
 
-        {tab === 'turnos' && (
-          <SupervisorShiftManager />
-        )}
-
-        {tab === 'stock' && (
-          <SupervisorStockManager />
-        )}
-
-        {tab === 'personal' && (
-          <PersonalManagement />
-        )}
-
-        {tab === 'perfil' && (
-          <UserProfile user={user} onUpdate={onUserUpdate} />
+        {tab === 'config' && (
+          <div className="flex flex-col gap-6">
+            <div className="bg-white p-1.5 rounded-2xl border border-slate-200 flex gap-2 w-full max-w-md mx-auto sticky top-20 z-40 shadow-sm">
+              {['anuncios', 'personal', 'perfil'].map(st => (
+                <button 
+                  key={st}
+                  onClick={() => setSubTab(st)}
+                  className={cn(
+                    "flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all",
+                    subTab === st ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:bg-slate-50"
+                  )}
+                >{st}</button>
+              ))}
+            </div>
+            {subTab === 'anuncios' && <SupervisorAnnouncements />}
+            {subTab === 'personal' && <PersonalManagement />}
+            {subTab === 'perfil' && <UserProfile user={user} onUpdate={onUserUpdate} />}
+          </div>
         )}
       </div>
     </div>

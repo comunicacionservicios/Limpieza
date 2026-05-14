@@ -104,12 +104,25 @@
         "comentario": { "type": "string" }
       },
       "required": ["operarioId", "accion", "fecha"]
+    },
+    "UserAuthMap": {
+      "title": "UserAuthMap",
+      "description": "Mapping from Firebase Auth UID to business username.",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
     }
   },
   "firestore": {
     "users": {
       "schema": "User",
       "description": "Store profiles of operarios and supervisors."
+    },
+    "user_auth_map": {
+      "schema": "UserAuthMap",
+      "description": "Cross-reference between authentication and business profiles."
     },
     "tasks": {
       "schema": "Task",
