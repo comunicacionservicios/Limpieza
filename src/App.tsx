@@ -1332,6 +1332,7 @@ export default function App() {
   // Authentication State
   const [user, setUser] = useStickyState<Operario | null>(null, 'limpieza_user');
   const [authLoading, setAuthLoading] = useState(true);
+  const [showPWAHelp, setShowPWAHelp] = useState(false);
   const [loginDate, setLoginDate] = useStickyState<string | null>(null, 'limpieza_login_date');
 
   useEffect(() => {
@@ -1473,8 +1474,6 @@ export default function App() {
       </>
     );
   }
-
-  const [showPWAHelp, setShowPWAHelp] = useState(false);
 
   return (
     <div className="min-h-screen bg-slate-100 flex items-start justify-center w-full font-sans text-slate-800">
