@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Clock, Play, Square, PauseCircle, LogOut, CheckCircle2, UserCircle, Users, RefreshCcw, Plus, Calendar, FileText, ClipboardList, ShieldAlert, Bell, Menu, X, Activity, WifiOff, Coffee, Monitor, LayoutGrid, MoveRight, MapPin, AlertTriangle, Package, ShieldCheck, ChevronRight, Camera, Key, Home, BarChart2, Megaphone, History, Trash2, Edit3, Settings, Shield } from 'lucide-react';
+import { jsPDF } from "jspdf";
+import "jspdf-autotable";
+import { Clock, Play, Square, PauseCircle, LogOut, CheckCircle2, PlusCircle, UserCircle, Users, RefreshCcw, Plus, Calendar, FileText, ClipboardList, ShieldAlert, Bell, Menu, X, Activity, WifiOff, Coffee, Monitor, LayoutGrid, MoveRight, MapPin, AlertTriangle, Package, ShieldCheck, ChevronRight, Camera, Key, Home, BarChart2, Megaphone, History, Trash2, Edit3, Settings, Shield, Download } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -41,8 +43,42 @@ function useCurrentTime() {
   return time;
 }
 
+// -- Helpers --
+
+function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const R = 6371e3; // Earth radius in meters
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+          Math.cos(φ1) * Math.cos(φ2) *
+          Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c; // in meters
+}
+
+const ARG_TZ = 'America/Argentina/Buenos_Aires';
+
 function getArgentinaDate() {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
+  return new Date().toLocaleDateString('en-CA', { timeZone: ARG_TZ });
+}
+
+function formatArgDate(date: Date | string | number, options: Intl.DateTimeFormatOptions = {}) {
+  const d = new Date(date);
+  return d.toLocaleDateString('es-AR', { timeZone: ARG_TZ, ...options });
+}
+
+function formatArgTime(date: Date | string | number, options: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit' }) {
+  const d = new Date(date);
+  return d.toLocaleTimeString('es-AR', { timeZone: ARG_TZ, ...options });
+}
+
+function formatArgDateTime(date: Date | string | number) {
+  const d = new Date(date);
+  return d.toLocaleString('es-AR', { timeZone: ARG_TZ });
 }
 
 function formatDuration(startTimeIso: string | null) {
@@ -182,7 +218,7 @@ function SupervisorIncidentsLog() {
                 )}>
                   {inc.estado || 'Abierto'}
                 </span>
-                <span className="text-[10px] text-slate-400 font-bold">{new Date(inc.fecha).toLocaleDateString()}</span>
+                <span className="text-[10px] text-slate-400 font-bold">{formatArgDate(inc.fecha)}</span>
               </div>
               <h4 className="font-bold text-slate-800 mb-1">{inc.tipo}</h4>
               <p className="text-xs text-slate-500 line-clamp-2 mb-3">{inc.descripcion}</p>
@@ -370,24 +406,24 @@ function SupervisorProductivityStats({ registros, operarios, tasks }: { registro
 
 function SupervisorAnnouncements() {
   const [msg, setMsg] = useState('');
-  const [startTime, setStartTime] = useState('');
-  const [endTime, setEndTime] = useState('');
+  const [startDateTime, setStartDateTime] = useState('');
+  const [endDateTime, setEndDateTime] = useState('');
   const [history, setHistory] = useState<any[]>([]);
 
   const sendAnnouncement = async () => {
     if (!msg.trim()) return;
     const item = { 
       text: msg.trim(), 
-      start_time: startTime || null, 
-      end_time: endTime || null 
+      start_time: startDateTime ? new Date(startDateTime).toISOString() : null, 
+      end_time: endDateTime ? new Date(endDateTime).toISOString() : null 
     };
     
     try {
       const { error } = await supabase.from('announcements').insert(item);
       if (error) throw error;
       setMsg('');
-      setStartTime('');
-      setEndTime('');
+      setStartDateTime('');
+      setEndDateTime('');
       alert("Comunicado enviado a todo el personal.");
       fetchAnnouncements();
     } catch (error) {
@@ -447,21 +483,21 @@ function SupervisorAnnouncements() {
 
         <div className="grid grid-cols-2 gap-4 mb-6">
           <div>
-            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">Hora Inicio (Desde)</label>
+            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">Visible Desde (Opcional)</label>
             <input 
-              type="time"
-              value={startTime}
-              onChange={e => setStartTime(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs outline-none focus:border-blue-400"
+              type="datetime-local"
+              value={startDateTime}
+              onChange={e => setStartDateTime(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-bold text-slate-600 outline-none focus:border-blue-400"
             />
           </div>
           <div>
-            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">Hora Fin (Hasta)</label>
+            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">Visible Hasta (Opcional)</label>
             <input 
-              type="time"
-              value={endTime}
-              onChange={e => setEndTime(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs outline-none focus:border-blue-400"
+              type="datetime-local"
+              value={endDateTime}
+              onChange={e => setEndDateTime(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-bold text-slate-600 outline-none focus:border-blue-400"
             />
           </div>
         </div>
@@ -488,13 +524,23 @@ function SupervisorAnnouncements() {
                 <p className="text-xs text-slate-700 leading-relaxed font-medium mb-2">{h.text}</p>
                 <div className="flex flex-col gap-1">
                   <div className="flex justify-between items-center text-[9px] font-bold text-slate-400 uppercase tracking-widest">
-                    <span>{new Date(h.created_at || h.date).toLocaleDateString()}</span>
-                    <span>{new Date(h.created_at || h.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    <span>{formatArgDate(h.created_at || h.date)}</span>
+                    <span>{formatArgTime(h.created_at || h.date)}</span>
                   </div>
                   {(h.start_time || h.end_time) && (
-                    <div className="flex items-center gap-1.5 text-[8px] font-black text-blue-500 uppercase tracking-[0.1em]">
-                      <Clock className="w-3 h-3" />
-                      Rango: {h.start_time || '00:00'} - {h.end_time || '23:59'}
+                    <div className="flex flex-col gap-1 mt-2">
+                       {h.start_time && (
+                         <div className="flex items-center gap-1.5 text-[9px] font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded w-fit">
+                           <Clock className="w-3 h-3 text-blue-500" />
+                           Desde: {formatArgDate(h.start_time, { day: '2-digit', month: 'short' })} {formatArgTime(h.start_time)}
+                         </div>
+                       )}
+                       {h.end_time && (
+                         <div className="flex items-center gap-1.5 text-[9px] font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded w-fit">
+                           <Clock className="w-3 h-3 text-blue-500" />
+                           Hasta: {formatArgDate(h.end_time, { day: '2-digit', month: 'short' })} {formatArgTime(h.end_time)}
+                         </div>
+                       )}
                     </div>
                   )}
                 </div>
@@ -556,7 +602,7 @@ function SupervisorShiftManager() {
         return t;
       });
 
-      const alertsEncontradas = nuevosAtrasados.filter(t => t.estado === 'Atrasado').map(t => `¡ALERTA!: ${t.operarioNombre} no ha marcado entrada en ${t.ubicacion} (Turno: ${new Date(t.inicioEstimado).toLocaleTimeString()})`);
+      const alertsEncontradas = nuevosAtrasados.filter(t => t.estado === 'Atrasado').map(t => `¡ALERTA!: ${t.operarioNombre} no ha marcado entrada en ${t.ubicacion} (Turno: ${formatArgTime(t.inicioEstimado)})`);
       
       setAlertas(alertsEncontradas);
       setTurnos(nuevosAtrasados);
@@ -647,7 +693,7 @@ function SupervisorShiftManager() {
                 <h5 className="font-black text-slate-800">{t.operarioNombre}</h5>
                 <p className="text-xs text-slate-500 font-bold">{t.ubicacion}</p>
                 <div className="flex flex-wrap items-center gap-2 mt-1">
-                  <span className="text-[10px] font-black uppercase text-slate-400">{new Date(t.inicioEstimado).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {new Date(t.finEstimado).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  <span className="text-[10px] font-black uppercase text-slate-400">{formatArgTime(t.inicioEstimado)} - {formatArgTime(t.finEstimado)}</span>
                   {t.reemplazoNombre && <span className="text-[9px] font-black text-blue-500 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-100">REEMPLAZO: {t.reemplazoNombre}</span>}
                   
                   {t.tareasAsignadas && t.tareasAsignadas.length > 0 && (
@@ -1446,7 +1492,7 @@ function OperarioTaskHistory({ user }: { user: Operario }) {
                   <div>
                     <h4 className="font-black text-slate-800 text-sm">{taskTitle}</h4>
                     <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">
-                      {startDate.toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' })}
+                      {formatArgDate(h.inicio)}
                     </p>
                   </div>
                   <div className="bg-emerald-50 text-emerald-600 text-[9px] font-black px-2 py-1 rounded-lg border border-emerald-100 uppercase">
@@ -1462,7 +1508,7 @@ function OperarioTaskHistory({ user }: { user: Operario }) {
                   <div className="flex flex-col gap-0.5">
                     <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest">Finalizó a las</span>
                     <span className="text-xs font-bold text-slate-600">
-                      {endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {formatArgTime(h.fin)}
                     </span>
                   </div>
                 </div>
@@ -1516,6 +1562,9 @@ export default function App() {
   const [breakLogId, setBreakLogId] = useStickyState<string | null>(null, 'limpieza_break_log_id');
   const [taskLogId, setTaskLogId] = useStickyState<string | null>(null, 'limpieza_task_log_id');
 
+  const [targetCoords, setTargetCoords] = useStickyState<{lat: number, lng: number} | null>(null, 'limpieza_target_coords');
+  const [currentCoords, setCurrentCoords] = useState<{lat: number, lng: number} | null>(null);
+
   // Menu & Dashboard States
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'tareas' | 'horarios' | 'insumos' | 'incidencias' | 'capacitacion' | 'rrhh' | 'perfil' | 'historial'>('tareas');
@@ -1524,35 +1573,100 @@ export default function App() {
 
   useEffect(() => {
     if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition((pos) => {
+      const watchId = navigator.geolocation.watchPosition((pos) => {
         setLocation(`${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`);
+        setCurrentCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      }, (err) => {
+        console.error("Geo error:", err);
+      }, {
+        enableHighAccuracy: true,
+        timeout: 5000,
+        maximumAge: 0
       });
+      return () => navigator.geolocation.clearWatch(watchId);
     }
   }, []);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [notifications, setNotifications] = useState<any[]>([]);
 
   useEffect(() => {
-    // Check pending tasks count to simulate notifications
     async function checkNotifications() {
       if (!user) return;
       try {
-        const { data, error } = await supabase
-          .from('tasks')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(10);
+        const notifs: any[] = [];
+        const todayStr = getArgentinaDate();
+
+        let query = supabase.from('tasks').select('*');
+        if (user.rol === 'operario') {
+          query = query.or(`created_by_id.eq.${user.id},asignados.cs.{${user.nombre}}`);
+        }
+        query = query.order('created_at', { ascending: false }).limit(50);
         
+        const { data: tasks, error } = await query;
         if (error) throw error;
         
-        if (data && data.length > 0) {
-          const urgentes = data.filter((d: any) => d.fecha_vencimiento);
-          setNotificationsCount(urgentes.length > 0 ? urgentes.length : 1);
+        if (tasks && tasks.length > 0) {
+          tasks.forEach((t: any) => {
+            const isToday = formatArgDate(t.created_at) === todayStr;
+            const isOverdue = t.fecha_vencimiento && t.fecha_vencimiento < todayStr && t.last_completed_date !== todayStr;
+            const isDueToday = t.fecha_vencimiento === todayStr && t.last_completed_date !== todayStr;
+            
+            if (isToday && user.rol === 'operario') {
+               notifs.push({
+                 id: `task-new-${t.id}`,
+                 title: 'Nueva Tarea',
+                 description: t.titulo,
+                 date: t.created_at,
+                 type: 'info'
+               });
+            } else if (isOverdue) {
+               notifs.push({
+                 id: `task-overdue-${t.id}`,
+                 title: 'Tarea Atrasada',
+                 description: `Venció: ${t.titulo}`,
+                 date: t.fecha_vencimiento,
+                 type: 'urgente'
+               });
+            } else if (isDueToday) {
+               notifs.push({
+                 id: `task-duetoday-${t.id}`,
+                 title: 'Vence Hoy',
+                 description: t.titulo,
+                 date: t.fecha_vencimiento,
+                 type: 'alerta'
+               });
+            }
+          });
         }
+        
+        // Supervisor check stock
+        if (user.rol === 'supervisor') {
+           const { data: insumos } = await supabase.from('insumos').select('*').lt('stock', 5);
+           if (insumos) {
+             insumos.forEach((i: any) => {
+               notifs.push({
+                 id: `insumo-${i.id}`,
+                 title: 'Atención: Stock Bajo',
+                 description: `${i.nombre} (Quedan ${i.stock})`,
+                 date: new Date().toISOString(),
+                 type: 'urgente'
+               });
+             });
+           }
+        }
+        
+        notifs.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        const uniqueNotifs = Array.from(new Map(notifs.map(item => [item.id, item])).values()).slice(0, 8);
+        
+        setNotifications(uniqueNotifs);
+        setNotificationsCount(uniqueNotifs.length);
       } catch (err) {
         console.error("Error in checkNotifications:", err);
       }
     }
     checkNotifications();
+    const interval = setInterval(checkNotifications, 1000 * 60 * 5); // check every 5 min
+    return () => clearInterval(interval);
   }, [user]);
 
   useEffect(() => {
@@ -1627,7 +1741,14 @@ export default function App() {
     return (
       <>
         <InstallBanner installProps={installProps} />
-        <SupervisorDashboard user={user} onLogout={handleLogout} onUserUpdate={setUser} />
+        <SupervisorDashboard 
+          user={user} 
+          onLogout={handleLogout} 
+          onUserUpdate={setUser} 
+          targetCoords={targetCoords}
+          setTargetCoords={setTargetCoords}
+          currentCoords={currentCoords}
+        />
       </>
     );
   }
@@ -1755,15 +1876,21 @@ export default function App() {
                     className="absolute top-12 left-0 bg-white p-4 rounded-2xl shadow-2xl border border-slate-100 z-[60] text-left w-64"
                   >
                     <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3 border-b border-slate-100 pb-2">Notificaciones</h4>
-                    {notificationsCount > 0 ? (
-                      <div className="flex flex-col gap-3">
-                        <div className="flex items-start gap-2">
-                          <div className="w-2 h-2 rounded-full bg-rose-500 mt-1"></div>
-                          <div>
-                            <p className="text-sm font-semibold text-slate-800">Tareas con vencimiento</p>
-                            <p className="text-xs text-slate-500 mt-0.5">Tienes tareas asignadas que vencen pronto.</p>
+                    {notifications.length > 0 ? (
+                      <div className="flex flex-col gap-3 max-h-[60vh] overflow-y-auto pr-1">
+                        {notifications.map((notif: any) => (
+                          <div key={notif.id} className="flex items-start gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-100 hover:border-blue-100 transition-colors">
+                            <div className={cn(
+                              "w-2.5 h-2.5 rounded-full mt-1 flex-shrink-0",
+                              notif.type === 'urgente' ? "bg-rose-500" :
+                              notif.type === 'alerta' ? "bg-amber-500" : "bg-blue-500"
+                            )}></div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-bold text-slate-800 leading-tight">{notif.title}</p>
+                              <p className="text-[10px] text-slate-500 mt-1 line-clamp-2">{notif.description}</p>
+                            </div>
                           </div>
-                        </div>
+                        ))}
                       </div>
                     ) : (
                       <p className="text-xs text-slate-400 font-medium">No hay notificaciones pendientes.</p>
@@ -1771,6 +1898,13 @@ export default function App() {
                   </motion.div>
                 )}
               </AnimatePresence>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-center absolute left-1/2 -translate-x-1/2">
+            <div className="flex items-center gap-1.5 px-3 py-1 bg-white/10 text-white rounded-full border border-white/20 shadow-sm backdrop-blur-md">
+              <MapPin className="w-3.5 h-3.5" />
+              <span className="text-[9px] font-black uppercase tracking-tighter">{location || 'GPS OK'}</span>
             </div>
           </div>
 
@@ -1804,6 +1938,8 @@ export default function App() {
           showNotifications={showNotifications}
           setShowNotifications={setShowNotifications}
           notificationsCount={notificationsCount}
+          targetCoords={targetCoords}
+          currentCoords={currentCoords}
         />
       </div>
     </div>
@@ -1825,7 +1961,9 @@ function Dashboard({
   taskComment, setTaskComment,
   activeTab, setActiveTab,
   showNotifications, setShowNotifications,
-  notificationsCount
+  notificationsCount,
+  targetCoords,
+  currentCoords
 }: any) {
   
   const time = useCurrentTime();
@@ -1908,20 +2046,20 @@ function Dashboard({
     }
   };
 
-  const recordTime = async (accion: string, startIso: string, comentario?: string) => {
-    const end = new Date();
+  const recordTime = async (accion: string, startIso: string, comentario?: string, isOngoing: boolean = false) => {
+    const end = isOngoing ? null : new Date();
     const start = new Date(startIso);
-    const durationMinutes = Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000));
+    const durationMinutes = isOngoing ? 0 : Math.max(1, Math.round((end!.getTime() - start.getTime()) / 60000));
     
     const payload: any = {
       operario_id: user?.id || 'unknown',
       operario_nombre: user?.nombre || 'Desconocido',
       accion: comentario ? `${accion} (Obs: ${comentario})` : accion,
       inicio: start.toISOString(),
-      fin: end.toISOString(),
+      fin: end ? end.toISOString() : null,
       duracion_minutos: durationMinutes,
       detalles: comentario || null,
-      fecha_argentina: start.toLocaleDateString('es-AR')
+      fecha_argentina: formatArgDate(start)
     };
 
     if (!navigator.onLine) {
@@ -1949,12 +2087,26 @@ function Dashboard({
   };
 
   const handleStartShift = async () => {
+    // Distance check
+    if (targetCoords && currentCoords) {
+      const dist = calculateDistance(currentCoords.lat, currentCoords.lng, targetCoords.lat, targetCoords.lng);
+      if (dist > 300) {
+        alert(`ACCESO DENEGADO: Estás fuera del perímetro permitido (${Math.round(dist)}m). Acércate a menos de 300m del punto central para iniciar jornada.`);
+        return;
+      }
+    } else if (targetCoords && !currentCoords) {
+      alert("ERROR DE GPS: No se detecta tu ubicación. Asegúrate de tener el GPS activado y dar permisos a la aplicación.");
+      return;
+    }
+
     const now = new Date().toISOString();
     if (shiftState === 'idle') {
       setJornadaStart(now);
+      recordTime('Turno', now, undefined, true);
     }
     if (shiftState === 'paused' && breakStart) {
       await recordTime('Descanso', breakStart);
+      recordTime('Turno', now, undefined, true);
     }
     setShiftStart(now);
     setBreakStart(null);
@@ -1965,9 +2117,11 @@ function Dashboard({
     if (shiftState === 'active' && shiftStart) {
       await recordTime('Turno (Tramo)', shiftStart);
     }
+    const now = new Date().toISOString();
     setShiftState('paused');
     setShiftStart(null);
-    setBreakStart(new Date().toISOString());
+    setBreakStart(now);
+    recordTime('Descanso', now, undefined, true);
   };
 
   const handleEndShift = async () => {
@@ -1999,8 +2153,10 @@ function Dashboard({
       alert("Por favor INICIE SU TURNO antes de comenzar una tarea.");
       return;
     }
+    const now = new Date().toISOString();
     setActiveTask(task);
-    setTaskStart(new Date().toISOString());
+    setTaskStart(now);
+    recordTime(`Tarea: ${task.titulo}`, now, undefined, true);
   };
 
   const handleFinishTask = async () => {
@@ -2099,19 +2255,14 @@ function Dashboard({
           </AnimatePresence>
         </div>
 
-        <div className="absolute top-2 right-6">
-          <div className="flex items-center gap-1.5 px-3 py-1 bg-slate-50 text-slate-400 rounded-full border border-slate-100 shadow-sm">
-            <MapPin className="w-3.5 h-3.5" />
-            <span className="text-[9px] font-black uppercase tracking-tighter">{location || 'GPS OK'}</span>
-          </div>
-        </div>
+
         
         <motion.div 
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           className="text-4xl font-bold tracking-tighter text-slate-900 mb-1"
         >
-          {time.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+          {formatArgTime(time)}
         </motion.div>
         {jornadaStart && (
           <p className="text-sm font-medium text-emerald-600 flex items-center justify-center gap-1.5 uppercase mb-1">
@@ -2126,21 +2277,13 @@ function Dashboard({
         )}
         {!jornadaStart && (
           <p className="text-sm font-medium text-slate-400 flex items-center justify-center gap-1.5 uppercase">
-            {time.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })}
+            {formatArgDate(time)}
           </p>
         )}
       </div>
 
       <div className="px-6 flex-1 flex flex-col gap-6">
         
-        {user.pin && ['1', '1211', '1234'].includes(user.pin) && (
-          <div className="bg-amber-100/50 p-4 rounded-2xl border border-amber-200">
-             <p className="text-amber-800 text-xs font-bold leading-relaxed flex items-start gap-2">
-               <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
-               Tu PIN actual es el de por defecto. Para mayor seguridad, te sugerimos cambiarlo desde la sección "Mi Perfil".
-             </p>
-          </div>
-        )}
 
         {/* NEW: ANUNCIOS DEL SUPERVISOR */}
         <AnunciosBanner />
@@ -2159,33 +2302,41 @@ function Dashboard({
               <ShiftButton color="green" icon={<Play className="w-6 h-6 fill-current" />} label="REANUDAR TRABAJO" onClick={handleStartShift} />
             )}
 
-            {shiftState === 'active' && (
-              <div className="bg-slate-50 rounded-2xl p-4 border border-emerald-100 flex flex-col items-center justify-center mb-2">
-                <span className="text-emerald-600 font-bold tracking-widest uppercase text-[10px] mb-1 flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                  Tramo Actual Activo
-                </span>
-                <span className="text-xl font-black text-slate-800 tracking-tight font-mono">{formatDuration(shiftStart)}</span>
-              </div>
-            )}
-            
             {(shiftState === 'active' || shiftState === 'paused') && (
-              <div className="grid grid-cols-2 gap-3">
-                <ShiftButton 
-                  disabled={shiftState === 'paused'}
-                  color="yellow" 
-                  small
-                  icon={<PauseCircle className="w-5 h-5" />} 
-                  label="DESCANSO" 
-                  onClick={handlePauseShift} 
-                />
-                <ShiftButton 
-                  color="red" 
-                  small
-                  icon={<Square className="w-5 h-5 fill-current" />} 
-                  label="FINALIZAR" 
-                  onClick={handleEndShift} 
-                />
+              <div className="flex bg-slate-50 rounded-2xl border border-emerald-100 overflow-hidden mb-2">
+                <div className={cn(
+                  "flex-1 flex flex-col items-center justify-center p-3 border-r border-slate-200/50",
+                  shiftState === 'active' ? "bg-emerald-50" : "bg-amber-50"
+                )}>
+                  <span className={cn(
+                    "font-bold tracking-widest uppercase text-[9px] mb-1 flex items-center gap-1.5",
+                    shiftState === 'active' ? "text-emerald-600" : "text-amber-600"
+                  )}>
+                    <span className={cn("w-1.5 h-1.5 rounded-full animate-pulse", shiftState === 'active' ? "bg-emerald-500" : "bg-amber-500")}></span>
+                    {shiftState === 'active' ? 'Tramo Actual' : 'En Descanso'}
+                  </span>
+                  <span className="text-xl font-black text-slate-800 tracking-tight font-mono leading-none">
+                    {formatDuration(shiftState === 'active' ? shiftStart : breakStart)}
+                  </span>
+                </div>
+                
+                <div className="flex-1 flex flex-col gap-2 p-2 justify-center bg-white">
+                  <ShiftButton 
+                    disabled={shiftState === 'paused'}
+                    color="yellow" 
+                    small
+                    icon={<PauseCircle className="w-4 h-4" />} 
+                    label="DESCANSO" 
+                    onClick={handlePauseShift} 
+                  />
+                  <ShiftButton 
+                    color="red" 
+                    small
+                    icon={<Square className="w-4 h-4 fill-current" />} 
+                    label="FINALIZAR" 
+                    onClick={handleEndShift} 
+                  />
+                </div>
               </div>
             )}
           </div>
@@ -2316,22 +2467,22 @@ function AnunciosBanner() {
       if (error) {
         console.error("Error loading announcements:", error);
       } else {
-        // Filtrar por horario actual del cliente
+        // Filtrar por rango de fechas (timed visibility)
         const now = new Date();
-        const currentTime = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
         
         const validAnnouncements = (data || []).filter((h: any) => {
           if (!h.start_time && !h.end_time) return true;
           
-          const start = h.start_time || '00:00';
-          const end = h.end_time || '23:59';
-          
-          if (start <= end) {
-            return currentTime >= start && currentTime <= end;
-          } else {
-            // Rango nocturno
-            return currentTime >= start || currentTime <= end;
+          let isValid = true;
+          if (h.start_time) {
+            const start = new Date(h.start_time);
+            if (now < start) isValid = false;
           }
+          if (h.end_time) {
+            const end = new Date(h.end_time);
+            if (now > end) isValid = false;
+          }
+          return isValid;
         });
 
         setAnnouncements(validAnnouncements);
@@ -2371,11 +2522,11 @@ function AnunciosBanner() {
             <span className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-400">Comunicado</span>
             {current.end_time && (
               <span className="text-[8px] font-bold text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded leading-none">
-                Vence {current.end_time}
+                Vence {formatArgDate(current.end_time, { day: '2-digit', month: 'short' })} {formatArgTime(current.end_time)}
               </span>
             )}
           </div>
-          <span className="text-[8px] font-bold text-slate-500">{new Date(current.created_at || current.date).toLocaleDateString()}</span>
+          <span className="text-[8px] font-bold text-slate-500">{formatArgDate(current.created_at || current.date)}</span>
         </div>
         <p className="text-xs font-bold leading-relaxed">{current.text}</p>
         
@@ -2408,13 +2559,13 @@ function ShiftButton({ color, label, icon, onClick, small, disabled }: { color: 
       whileTap={disabled ? {} : { scale: 0.96 }}
       onClick={disabled ? undefined : onClick}
       className={cn(
-        "rounded-[28px] font-black uppercase transition-all flex flex-col items-center justify-center p-6 border-b-4 border-black/10 tracking-widest",
+        "rounded-2xl font-black uppercase transition-all flex flex-row items-center justify-center border-b-[3px] border-black/10 tracking-widest",
         colors[color],
-        small ? "text-[10px] gap-2 min-h-[100px]" : "w-full text-sm gap-3 min-h-[120px]",
+        small ? "text-[10px] gap-2 min-h-[40px] py-2 px-4" : "w-full text-sm gap-3 min-h-[50px] py-3 px-6",
         baseClasses
       )}
     >
-      <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-md">
+      <div className={cn("rounded-full bg-white/20 flex items-center justify-center backdrop-blur-md", small ? "w-6 h-6" : "w-8 h-8")}>
         {icon}
       </div>
       <span>{label}</span>
@@ -2458,9 +2609,13 @@ function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) 
     }
 
     try {
-      const { data, error } = await supabase
-        .from('tasks')
-        .select('*')
+      let query = supabase.from('tasks').select('*');
+      
+      if (user.rol === 'operario') {
+        query = query.or(`created_by_id.eq.${user.id},asignados.cs.{${user.nombre}}`);
+      }
+      
+      const { data, error } = await query
         .eq('frecuencia', filter)
         .order('created_at', { ascending: false })
         .range(pageNum * pageSize, (pageNum + 1) * pageSize - 1);
@@ -2539,7 +2694,9 @@ function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) 
       frecuencia: newTaskFreq,
       tipo_limpieza: newTaskType,
       descripcion: newTaskDesc || null,
-      fecha_vencimiento: newTaskDate || null
+      fecha_vencimiento: newTaskDate || null,
+      asignados: [user.nombre], // Auto-assign to self if created by operario
+      created_by_id: user.id
     };
     
     try {
@@ -2632,7 +2789,7 @@ function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) 
         {!isCreating && (
           <button 
             onClick={() => { setIsCreating(true); setNewTaskFreq(filter); }} 
-            className="text-[10px] font-bold uppercase bg-white border border-slate-200 text-slate-600 px-3 py-1.5 rounded-full flex items-center gap-1 hover:bg-slate-50 transition-colors shadow-sm"
+            className="text-[10px] font-bold uppercase bg-blue-600 border border-blue-500 text-white px-8 py-1.5 rounded-full flex items-center gap-1 hover:bg-blue-700 transition-all shadow-md shadow-blue-200 scale-105"
           >
             <Plus className="w-3 h-3" /> Nueva
           </button>
@@ -2877,9 +3034,13 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
         .from('users')
         .select('*')
         .eq('id', loginId)
-        .single();
+        .maybeSingle(); // maybeSingle uses fewer errors for "not found"
       
-      if (fetchError || !userData) {
+      if (fetchError) {
+        throw new Error(`Error de conexión con la base de datos: ${fetchError.message}`);
+      }
+      
+      if (!userData) {
         // Not in database yet, check default users map
         const defaultUser = DEFAULT_USERS.find(d => d.usuario === u && d.defaultPin === pin.trim());
         if (defaultUser) {
@@ -2894,10 +3055,11 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
             activo: true
           };
           
-          const { error: upsertError } = await supabase.from('users').upsert(newUserData);
-          if (upsertError) {
-            console.error("Upsert user error:", upsertError);
-            throw new Error(`Error BD al inicializar: ${upsertError.message}`);
+          // Use insert instead of upsert to be safe, if we get here userData was null
+          const { error: insertError } = await supabase.from('users').insert(newUserData);
+          if (insertError) {
+            console.error("Insert user error:", insertError);
+            throw new Error(`Error BD al inicializar: ${insertError.message}`);
           }
           
           userData = newUserData;
@@ -2906,6 +3068,9 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
         }
       } else {
         // Exists in DB
+        if (!userData.activo) {
+          throw new Error('El usuario está desactivado. Contacte a un supervisor.');
+        }
         if (userData.pin !== pin.trim()) {
           throw new Error('Usuario o PIN incorrectos.');
         }
@@ -2913,11 +3078,20 @@ function LoginScreen({ onLogin, installProps }: { onLogin: (user: Operario, d: s
 
       // Check permissions based on role
       const isSupervisor = userData.rol === 'supervisor';
-      // if (!isSupervisor && userData.rol === 'operario') {
-      //   if (geoStatus !== 'allowed') {
-      //     throw new Error('Los operarios deben estar en el rango de la empresa para ingresar.');
-      //   }
-      // }
+      
+      // Log session start for operators and supervisors
+      if (userData.rol === 'operario' || userData.rol === 'supervisor') {
+        const start = new Date();
+        await supabase.from('logs').insert({
+          operario_id: loginId,
+          operario_nombre: userData.nombre,
+          accion: userData.rol === 'supervisor' ? '[SUPERVISOR] Sesión Iniciada' : 'Sesión Iniciada',
+          inicio: start.toISOString(),
+          fin: start.toISOString(), // Sessions are instantaneous logs
+          duracion_minutos: 0,
+          fecha_argentina: formatArgDate(start)
+        });
+      }
 
       onLogin({ ...userData, id: loginId } as any, getArgentinaDate());
     } catch (err: any) {
@@ -3119,7 +3293,7 @@ function SupervisorStockManager() {
                   </div>
                   <div>
                     <h4 className="text-sm font-black text-slate-800">{p.insumoNombre} <span className="text-blue-600">x{p.cantidad}</span></h4>
-                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{p.operarioNombre} • {new Date(p.fecha).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{p.operarioNombre} • {formatArgTime(p.fecha)}</p>
                     {p.alertaConsumo && (
                       <p className="text-[9px] font-black text-rose-600 uppercase mt-1 flex items-center gap-1">
                         <AlertTriangle className="w-3 h-3" /> Alerta: Consumo superior al normal
@@ -3213,7 +3387,7 @@ function useReminderChecker() {
   }, [reminders]);
 }
 
-function SupervisorTasksManager() {
+function SupervisorTasksManager({ user }: { user: Operario }) {
   const [tasks, setTasks] = useState<any[]>([]);
   const [operarios, setOperarios] = useState<Operario[]>([]);
   const [loading, setLoading] = useState(true);
@@ -3243,7 +3417,15 @@ function SupervisorTasksManager() {
     }
 
     try {
-      let query = supabase.from('tasks').select('*').order('created_at', { ascending: false }).range(pageNum * pageSize, (pageNum + 1) * pageSize - 1);
+      let query = supabase.from('tasks').select('*');
+      
+      // If operario, restrict to assigned tasks or tasks they created
+      if (user.rol === 'operario') {
+         query = query.or(`created_by_id.eq.${user.id},asignados.cs.{${user.nombre}}`);
+      }
+      
+      query = query.order('created_at', { ascending: false })
+        .range(pageNum * pageSize, (pageNum + 1) * pageSize - 1);
       
       if (frecuenciaFilter !== 'Todas') {
         query = query.eq('frecuencia', frecuenciaFilter);
@@ -3366,7 +3548,8 @@ function SupervisorTasksManager() {
       fecha_vencimiento: newTaskDate || null,
       asignados: asignados.length > 0 ? asignados : null,
       duracion_estimada_minutos: duracionEst ? parseInt(duracionEst) : null,
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      created_by_id: user?.id
     };
     
     try {
@@ -3449,93 +3632,108 @@ function SupervisorTasksManager() {
           )}
           <button 
              onClick={() => creating ? resetForm() : setCreating(true)}
-             className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1 transition-colors ml-auto"
+             className="bg-violet-600 hover:bg-violet-700 text-white px-6 py-3 rounded-2xl text-sm font-black uppercase tracking-widest flex items-center gap-2 transition-all shadow-xl hover:shadow-violet-500/40 hover:scale-105 active:scale-95 border-b-4 border-black/20 ml-auto animate-pulse"
           >
-            {creating ? 'Volver' : <><Plus className="w-4 h-4"/> Nueva Tarea</>}
+            {creating ? 'Volver' : <div className="flex items-center gap-2"><div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center"><Plus className="w-4 h-4"/></div> NUEVA TAREA</div>}
           </button>
         </div>
       </div>
 
 
       {creating ? (
-        <div className="w-full bg-blue-50/50 border border-blue-100 rounded-2xl p-5 mb-6 flex flex-col gap-4">
-          <h4 className="text-sm font-bold text-blue-600 tracking-widest mb-2 border-b border-blue-100 pb-2">
-            {editingId ? 'Editar Tarea' : 'Carga de Nueva Tarea'}
-          </h4>
+        <div className="w-full bg-blue-600 border-4 border-[#0b3464] shadow-2xl shadow-blue-200 rounded-[32px] p-8 mb-8 flex flex-col gap-6 transform transition-all animate-in fade-in slide-in-from-top-4 duration-500">
+          <div className="flex items-center justify-between border-b border-white/20 pb-4">
+            <h4 className="text-lg font-black text-white tracking-tight uppercase">
+              {editingId ? '✍️ Editar Tarea' : '🚀 Carga de Nueva Tarea'}
+            </h4>
+            <div className="text-[10px] bg-white/20 text-white px-3 py-1 rounded-full font-black uppercase tracking-widest">
+              Supervisor Privileged
+            </div>
+          </div>
           
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <input 
-              autoFocus
-              className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-semibold outline-none focus:border-blue-500 transition-colors"
-              placeholder="Título de la tarea*"
-              value={newTaskTitle}
-              onChange={e => setNewTaskTitle(e.target.value)}
-            />
-            <div className="flex gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+            <div className="flex flex-col gap-2">
+              <label className="text-xs font-black text-blue-100 uppercase tracking-widest ml-1">Nombre de la Tarea</label>
               <input 
-                type="number"
-                className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-semibold outline-none focus:border-blue-500 transition-colors"
-                placeholder="Duración estim. (min)"
-                value={duracionEst}
-                onChange={e => setDuracionEst(e.target.value)}
+                autoFocus
+                className="w-full bg-white/10 border border-[#0b3464] rounded-2xl px-5 py-4 text-sm font-bold text-white placeholder:text-blue-200 outline-none focus:bg-white focus:text-slate-900 transition-all shadow-inner"
+                placeholder="Ej: Limpieza de ventanales"
+                value={newTaskTitle}
+                onChange={e => setNewTaskTitle(e.target.value)}
               />
-              <select 
-                className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-semibold outline-none focus:border-blue-500 transition-colors"
-                value={newTaskFreq}
-                onChange={e => setNewTaskFreq(e.target.value as any)}
-              >
-                <option value="Diaria">Diaria</option>
-                <option value="Semanal">Semanal</option>
-                <option value="Mensual">Mensual</option>
-                <option value="Eventual">Eventual</option>
-              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-black text-blue-100 uppercase tracking-widest ml-1">Tiempo Est. (Min)</label>
+                <input 
+                  type="number"
+                  className="w-full bg-white/10 border border-[#0b3464] rounded-2xl px-5 py-4 text-sm font-bold text-white placeholder:text-blue-200 outline-none focus:bg-white focus:text-slate-900 transition-all shadow-inner"
+                  placeholder="Minutos"
+                  value={duracionEst}
+                  onChange={e => setDuracionEst(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-black text-blue-100 uppercase tracking-widest ml-1">Frecuencia</label>
+                <select 
+                  className="w-full bg-white/10 border border-[#0b3464] rounded-2xl px-5 py-4 text-sm font-bold text-white outline-none focus:bg-white focus:text-slate-900 transition-all shadow-inner appearance-none"
+                  value={newTaskFreq}
+                  onChange={e => setNewTaskFreq(e.target.value as any)}
+                >
+                  <option value="Diaria" className="text-slate-900">Diaria</option>
+                  <option value="Semanal" className="text-slate-900">Semanal</option>
+                  <option value="Mensual" className="text-slate-900">Mensual</option>
+                  <option value="Eventual" className="text-slate-900">Eventual</option>
+                </select>
+              </div>
             </div>
           </div>
           
           <textarea 
-            className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-blue-500 transition-colors resize-none h-20"
-            placeholder="Descripción e instrucciones detalladas (opcional)"
+            className="w-full bg-white/10 border border-[#0b3464] rounded-2xl px-5 py-4 text-sm font-medium text-white placeholder:text-blue-200 outline-none focus:bg-white focus:text-slate-900 transition-all shadow-inner resize-none h-24"
+            placeholder="Detalle los pasos a seguir..."
             value={newTaskDesc}
             onChange={e => setNewTaskDesc(e.target.value)}
           />
 
-          <div className="flex flex-col gap-2">
-            <label className="text-xs font-bold text-slate-500 uppercase">Asignar Operarios (Opcional)</label>
-            <div className="flex flex-wrap gap-2">
+          <div className="flex flex-col gap-3">
+            <label className="text-xs font-black text-blue-100 uppercase tracking-widest ml-1">Personal Asignado</label>
+            <div className="flex flex-wrap gap-2 p-4 bg-white/5 rounded-2xl border border-[#0b3464] max-h-32 overflow-y-auto">
                {operarios.filter(o => o.rol !== 'supervisor').map(op => (
                  <button 
                    key={op.id || op.nombre}
                    onClick={() => toggleAsignado(op.nombre)}
                    className={cn(
-                     "px-3 py-1.5 rounded-full text-xs font-bold transition-colors border",
+                     "px-4 py-2 rounded-xl text-xs font-black transition-all border-2",
                      asignados.includes(op.nombre) 
-                       ? "bg-blue-600 text-white border-blue-600 shadow-sm" 
-                       : "bg-white text-slate-600 border-slate-200 hover:border-blue-300"
+                       ? "bg-white text-blue-600 border-white shadow-lg scale-105" 
+                       : "bg-white/10 text-white border-white/20 hover:border-white/40"
                    )}
                  >
                    {op.nombre}
                  </button>
                ))}
-               {operarios.length === 0 && <span className="text-xs text-slate-400">No hay operarios disponibles.</span>}
+               {operarios.length === 0 && <span className="text-xs text-blue-100 font-bold italic">No hay operarios cargados.</span>}
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
-            <div className="flex flex-col gap-1 text-xs">
-              <label className="font-bold text-slate-500">Fecha de Vencimiento</label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mt-2 pt-4 border-t border-white/10">
+            <div className="flex flex-col gap-2">
+              <label className="text-xs font-black text-blue-100 uppercase tracking-widest ml-1">Vencimiento del Plan</label>
               <input 
                 type="date"
-                className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-semibold text-slate-600 outline-none focus:border-blue-500 transition-colors"
+                className="w-full bg-white/10 border border-[#0b3464] rounded-2xl px-5 py-4 text-sm font-bold text-white outline-none focus:bg-white focus:text-slate-900 transition-all shadow-inner"
                 value={newTaskDate}
                 onChange={e => setNewTaskDate(e.target.value)}
               />
             </div>
             <div className="flex items-end">
               <button 
-                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl py-3 text-sm font-bold shadow-sm transition-colors uppercase tracking-wider" 
+                className="w-full bg-white text-blue-600 hover:bg-blue-50 rounded-2xl py-4 text-sm font-black shadow-xl transition-all uppercase tracking-[0.2em] hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-3" 
                 onClick={handleCreateOrEditTask}
               >
-                {editingId ? 'Guardar Cambios' : 'Crear Tarea'}
+                {editingId ? <CheckCircle2 className="w-5 h-5"/> : <PlusCircle className="w-5 h-5"/>}
+                {editingId ? 'Actualizar Tarea' : 'Publicar Tarea'}
               </button>
             </div>
           </div>
@@ -3595,37 +3793,38 @@ function SupervisorTasksManager() {
       ) : (
       
       loading ? (
-        <div className="p-12 flex justify-center"><RefreshCcw className="w-8 h-8 animate-spin text-slate-300" /></div>
+        <div className="p-12 flex justify-center"><RefreshCcw className="w-8 h-8 animate-spin text-blue-600" /></div>
       ) : filteredTasks.length === 0 ? (
-        <div className="p-12 text-center text-slate-400 font-medium">No hay tareas en este estado.</div>
+        <div className="p-12 text-center text-slate-400 font-medium">No hay tareas planificadas.</div>
       ) : (
-        <div className="w-full bg-slate-50 rounded-2xl p-4 border border-slate-100 overflow-x-auto">
-          <table className="w-full text-left text-sm whitespace-nowrap">
-            <thead className="text-slate-400 font-bold uppercase tracking-wider text-[10px] border-b border-slate-200">
-              <tr>
-                <th className="pb-3 px-2">Tarea</th>
-                <th className="pb-3 px-2 hidden sm:table-cell">Frecuencia</th>
-                <th className="pb-3 px-2 hidden md:table-cell">Vencimiento</th>
-                <th className="pb-3 px-2">Estado</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
+        <div className="w-full bg-white rounded-[32px] p-2 border-4 border-[#0b3464] shadow-2xl shadow-blue-100 overflow-hidden mt-2">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm whitespace-nowrap">
+              <thead className="bg-blue-600 text-white font-black uppercase tracking-[0.2em] text-[9px]">
+                <tr>
+                  <th className="py-5 px-6 rounded-tl-[24px]">Planificación / Tarea</th>
+                  <th className="py-5 px-6 hidden sm:table-cell">Recurrencia</th>
+                  <th className="py-5 px-6 hidden md:table-cell">Límite</th>
+                  <th className="py-5 px-6 rounded-tr-[24px]">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-blue-50">
               {filteredTasks.map((t: any) => (
                 <React.Fragment key={t.id}>
                   <tr 
                     className="hover:bg-slate-100 transition-colors cursor-pointer" 
                     onClick={() => setExpandedTaskId(expandedTaskId === t.id ? null : t.id)}
                   >
-                    <td className="px-2 py-3 font-semibold text-slate-800 flex items-center gap-2">
-                       {expandedTaskId === t.id ? <PauseCircle className="w-4 h-4 text-emerald-500 flex-shrink-0" /> : <Play className="w-4 h-4 text-slate-400 flex-shrink-0" />}
+                    <td className="px-6 py-5 font-bold text-slate-800 flex items-center gap-3">
+                       {expandedTaskId === t.id ? <PauseCircle className="w-5 h-5 text-emerald-500 flex-shrink-0" /> : <Play className="w-5 h-5 text-blue-400/50 flex-shrink-0" />}
                        <span className="truncate max-w-[150px] sm:max-w-[250px]">{t.titulo}</span>
                     </td>
-                    <td className="px-2 py-3 hidden sm:table-cell"><span className="text-[10px] font-bold text-slate-500 uppercase bg-slate-200 px-2 py-0.5 rounded-full">{t.frecuencia}</span></td>
-                    <td className="px-2 py-3 text-slate-500 font-medium hidden md:table-cell">{t.fecha_vencimiento || '-'}</td>
-                    <td className="px-2 py-3">
+                    <td className="px-6 py-5 hidden sm:table-cell"><span className="text-[10px] font-black text-blue-600 uppercase bg-blue-50 px-3 py-1 rounded-full border border-blue-100">{t.frecuencia}</span></td>
+                    <td className="px-6 py-5 text-slate-500 font-bold hidden md:table-cell">{t.fecha_vencimiento ? formatArgDate(t.fecha_vencimiento) : '-'}</td>
+                    <td className="px-6 py-5">
                       <span className={cn(
-                        "text-[10px] font-bold uppercase px-2 py-0.5 rounded-full",
-                        t._estadoSimulado === 'Pendiente' ? "bg-amber-100 text-amber-600" : "bg-emerald-100 text-emerald-600"
+                        "text-[10px] font-black uppercase px-3 py-1 rounded-full shadow-sm",
+                        t._estadoSimulado === 'Pendiente' ? "bg-amber-100 text-amber-600 border border-amber-200" : "bg-emerald-100 text-emerald-600 border border-emerald-200"
                       )}>
                         {t._estadoSimulado}
                       </span>
@@ -3671,8 +3870,9 @@ function SupervisorTasksManager() {
                   )}
                 </React.Fragment>
               ))}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
         </div>
       ))}
     </div>
@@ -3699,74 +3899,195 @@ function KPICard({ title, value, icon, trend, sub }: any) {
   );
 }
 
-function ActivityFeed({ registros }: { registros: any[] }) {
-  const recentActions = registros.slice(0, 10);
+
+
+
+function DailyReportScreen({ registros, operarios, tasks, supervisorName, onBack }: { registros: any[], operarios: any[], tasks: any[], supervisorName: string, onBack: () => void }) {
+  const componentRef = React.useRef(null);
   
+  const today = new Date();
+  const todayStr = getArgentinaDate();
+
+  const perOpMetrics = React.useMemo(() => {
+    return operarios.map(op => {
+      const logs = registros
+        .filter(r => r.operario_nombre === op.nombre && formatArgDate(r.inicio) === todayStr)
+        .sort((a,b) => new Date(a.inicio).getTime() - new Date(b.inicio).getTime());
+
+      if (logs.length === 0) return null;
+
+      const firstLog = logs[0];
+      const lastLog = [...logs].reverse().find(l => l.fin) || logs[logs.length - 1];
+
+      const startTime = formatArgTime(firstLog.inicio);
+      const endTime = lastLog.fin ? formatArgTime(lastLog.fin) : 'Activo';
+      
+      const totalMin = logs.reduce((acc, r) => acc + (r.duracion_minutos || 0), 0);
+      const hours = (totalMin / 60).toFixed(1);
+
+      const assignedCount = tasks.filter(t => t.asignados && t.asignados.includes(op.nombre)).length;
+      const completedCount = logs.filter(r => 
+        r.fin && 
+        r.accion && 
+        !r.accion.includes('Turno') && 
+        !r.accion.includes('Descanso') && 
+        !r.accion.startsWith('Sesión')
+      ).length;
+
+      const efficacy = assignedCount > 0 ? Math.round((completedCount / assignedCount) * 100) : 100;
+
+      return {
+        nombre: op.nombre,
+        inicio: startTime,
+        fin: endTime,
+        duracion: `${hours}h`,
+        assigned: assignedCount,
+        completed: completedCount,
+        efficacy: efficacy
+      };
+    }).filter(Boolean);
+  }, [registros, operarios, tasks, todayStr]);
+
   return (
-    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col h-full">
-      <div className="p-5 border-b border-slate-50 flex items-center justify-between bg-white sticky top-0 z-10">
-        <h3 className="font-bold text-slate-800 flex items-center gap-2 text-sm uppercase tracking-wider">
-          <RefreshCcw className="w-4 h-4 text-blue-500 animate-spin" /> Log Reciente
-        </h3>
-        <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-black animate-pulse">EN VIVO</span>
-      </div>
-      <div className="overflow-y-auto max-h-[300px] divide-y divide-slate-50">
-        {recentActions.length > 0 ? recentActions.map((reg, idx) => (
-          <motion.div 
-            initial={{ opacity: 0, x: -10 }}
-            animate={{ opacity: 1, x: 0 }}
-            key={reg.id || idx}
-            className="p-4 hover:bg-slate-50 transition-colors flex items-start gap-3"
-          >
-            <div className={cn(
-              "w-8 h-8 rounded-xl flex items-center justify-center shrink-0",
-              reg.accion?.includes('Turno') ? "bg-emerald-100 text-emerald-600" :
-              reg.accion?.includes('Descanso') ? "bg-amber-100 text-amber-600" :
-              "bg-blue-100 text-blue-600"
-            )}>
-              {reg.accion?.includes('Turno') ? <Play className="w-4 h-4" /> :
-               reg.accion?.includes('Descanso') ? <PauseCircle className="w-4 h-4" /> :
-               <CheckCircle2 className="w-4 h-4" />}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex justify-between items-start gap-2">
-                <p className="text-sm font-bold text-slate-800 truncate">{reg.operario_nombre}</p>
-                <span className="text-[10px] text-slate-400 font-medium whitespace-nowrap">
-                  {new Date(reg.inicio).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </span>
+    <div className="min-h-screen bg-[#f7f9fb] text-[#191c1e] font-sans animate-in fade-in duration-500">
+      <header className="bg-[#f7f9fb] border-b border-[#c6c6cd] sticky top-0 z-50 no-print">
+        <div className="flex justify-between items-center w-full py-4 max-w-[1280px] mx-auto px-4">
+          <div className="flex items-center gap-4">
+            <button onClick={onBack} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+              <ChevronRight className="w-5 h-5 rotate-180" />
+            </button>
+            <div className="flex flex-col">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-black rounded-lg flex items-center justify-center text-white">
+                  <Activity className="w-5 h-5" />
+                </div>
+                <h1 className="text-lg md:text-xl font-bold tracking-tight">Reporte de Productividad Diaria</h1>
               </div>
-              <p className="text-[10px] text-slate-500 font-medium mt-0.5 italic">
-                {reg.accion}
-              </p>
+              <p className="text-xs font-bold text-blue-600 mt-1 pl-11">{formatArgDate(today)}</p>
             </div>
-          </motion.div>
-        )) : (
-          <div className="p-10 text-center text-slate-400 text-sm italic">
-            Esperando actividad...
           </div>
-        )}
+          <button 
+            onClick={() => window.print()}
+            className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg shadow-black/10"
+          >
+            <Download className="w-4 h-4" /> Imprimir / PDF
+          </button>
+        </div>
+      </header>
+
+      <div ref={componentRef} className="print:p-0 print:m-0">
+        <main className="max-w-[1280px] mx-auto py-8 px-4">
+          <section className="bg-white border border-[#c6c6cd] mb-8 shadow-sm overflow-hidden rounded-2xl">
+            <div className="px-6 py-4 border-b border-[#c6c6cd] bg-black text-white flex justify-between items-center">
+            <div className="flex flex-col gap-1">
+              <h2 className="text-sm font-bold flex items-center gap-2 uppercase tracking-widest">
+                <ClipboardList className="w-5 h-5" /> Desempeño por Operario
+              </h2>
+            </div>
+            <span className="text-[10px] font-bold uppercase tracking-[0.2em] opacity-60">Actualizado hace un momento</span>
+          </div>
+          
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-[#f2f4f6] text-[#45464d]">
+                  <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-wider border-b border-[#c6c6cd]">OP.</th>
+                  <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-wider border-b border-[#c6c6cd] text-center">INI.</th>
+                  <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-wider border-b border-[#c6c6cd] text-center">FIN</th>
+                  <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-wider border-b border-[#c6c6cd] text-center">DUR.</th>
+                  <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-wider border-b border-[#c6c6cd] text-center">ASIG.</th>
+                  <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-wider border-b border-[#c6c6cd] text-center">REAL.</th>
+                  <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-wider border-b border-[#c6c6cd] text-center">% CUMP.</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#c6c6cd]">
+                {perOpMetrics.map((m: any, idx) => (
+                  <tr key={idx} className={cn("hover:bg-[#f2f4f6] transition-colors", idx % 2 !== 0 && "bg-[#f2f4f6]/30")}>
+                    <td className="px-4 py-5 text-sm font-bold text-slate-800">{m.nombre}</td>
+                    <td className="px-4 py-5 text-center text-xs font-mono text-slate-500">{m.inicio}</td>
+                    <td className="px-4 py-5 text-center text-xs font-mono text-slate-500">{m.fin}</td>
+                    <td className="px-4 py-5 text-center text-xs font-mono font-bold text-slate-700">{m.duracion}</td>
+                    <td className="px-4 py-5 text-center text-xs font-mono text-slate-500">{m.assigned}</td>
+                    <td className="px-4 py-5 text-center text-xs font-mono text-slate-500">{m.completed}</td>
+                    <td className="px-4 py-5">
+                      <div className="flex flex-col items-center gap-1">
+                        <span className={cn(
+                          "text-[11px] font-black",
+                          m.efficacy >= 90 ? "text-emerald-600" : m.efficacy >= 70 ? "text-amber-600" : "text-rose-600"
+                        )}>{m.efficacy}%</span>
+                        <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div 
+                            className={cn(
+                              "h-full rounded-full transition-all duration-1000",
+                              m.efficacy >= 90 ? "bg-emerald-500" : m.efficacy >= 70 ? "bg-amber-500" : "bg-rose-500"
+                            )}
+                            style={{ width: `${m.efficacy}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="mt-16 mb-12 p-12 bg-white border border-[#c6c6cd] rounded-3xl flex flex-col gap-4 shadow-sm items-center max-w-md mx-auto text-center border-dashed">
+          <div className="w-full max-w-[240px]">
+            <div className="w-full border-b-2 border-black mb-6 min-h-[60px] flex items-end justify-center pb-2">
+               <span className="font-serif italic text-2xl text-slate-300 pointer-events-none">Firma Digital</span>
+            </div>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">Responsable de Turno</p>
+            <p className="text-sm font-bold text-slate-800 uppercase tracking-tight">{supervisorName}</p>
+            <p className="text-[10px] font-medium text-slate-400 italic mt-1">Verificado en Sistema</p>
+          </div>
+        </section>
+      </main>
+
+      <footer className="bg-[#f7f9fb] border-t border-[#c6c6cd] mt-auto">
+        <div className="flex justify-between items-center w-full py-8 max-w-[1280px] mx-auto px-4 flex-col text-center gap-4">
+          <div className="text-[10px] font-bold text-[#45464d] uppercase tracking-[0.2em]">
+            Generado: {formatArgDateTime(new Date())} | Reporte Oficial
+          </div>
+          <div className="text-[11px] font-medium text-slate-400 leading-relaxed">
+            © 2026 Arevalo Servicios Sociales.<br />Desarrollo WM.
+          </div>
+        </div>
+      </footer>
       </div>
+
+      <style dangerouslySetInnerHTML={{ __html: `
+        @media print {
+          .no-print { display: none !important; }
+          body { background-color: white !important; }
+          main { padding: 0 !important; }
+          .rounded-2xl, .rounded-3xl { border-radius: 0 !important; }
+          .shadow-sm { box-shadow: none !important; }
+          .border { border-color: #eee !important; }
+        }
+      `}} />
     </div>
   );
 }
 
 function DailySupervisorReport({ registros, operarios, tasks }: { registros: any[], operarios: any[], tasks: any[] }) {
-  const todayStr = React.useMemo(() => new Date().toLocaleDateString('es-AR'), []);
+  const todayStr = React.useMemo(() => getArgentinaDate(), []);
   
   const reportData = React.useMemo(() => {
     return operarios.filter(o => o.rol !== 'supervisor').map(op => {
-      const opsRecords = registros.filter(r => r.operario_nombre === op.nombre && new Date(r.inicio).toLocaleDateString('es-AR') === todayStr);
+      const opsRecords = registros.filter(r => r.operario_nombre === op.nombre && formatArgDate(r.inicio) === todayStr);
       
       let horaIngreso = '-';
       let horaSalida = '-';
       
       if (opsRecords.length > 0) {
         const sortedDesc = [...opsRecords].sort((a,b) => new Date(a.inicio).getTime() - new Date(b.inicio).getTime());
-        horaIngreso = new Date(sortedDesc[0].inicio).toLocaleTimeString('es-AR', { hour: '2-digit', minute:'2-digit' });
+        horaIngreso = formatArgTime(sortedDesc[0].inicio);
         
         const lastRec = sortedDesc[sortedDesc.length - 1];
         if (lastRec.fin) {
-          horaSalida = new Date(lastRec.fin).toLocaleTimeString('es-AR', { hour: '2-digit', minute:'2-digit' });
+          horaSalida = formatArgTime(lastRec.fin);
         } else {
           horaSalida = 'En turno';
         }
@@ -3868,7 +4189,7 @@ function JibbleHourReport({ registros, operarios, reportDateMode, setReportDateM
     const data: any = {};
     
     registros.forEach((r: any) => {
-      const date = new Date(r.inicio).toLocaleDateString('es-AR');
+      const date = formatArgDate(r.inicio);
       const key = `${r.operario_nombre}-${date}`;
       
       if (!data[key]) {
@@ -4059,7 +4380,7 @@ function TaskCalendarView({ tasks }: { tasks: any[] }) {
                 <div>
                    <h4 className="font-black text-slate-800 tracking-tight flex items-center gap-2">
                      <ClipboardList className="w-5 h-5 text-blue-500" />
-                     Tareas del {new Date(selectedDayTasks.date + 'T12:00:00').toLocaleDateString('es-AR', { day: 'numeric', month: 'long' })}
+                     Tareas del {formatArgDate(selectedDayTasks.date + 'T12:00:00', { day: 'numeric', month: 'long' })}
                    </h4>
                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{selectedDayTasks.tasks.length} {selectedDayTasks.tasks.length === 1 ? 'tarea' : 'tareas'} programadas</p>
                 </div>
@@ -4102,7 +4423,111 @@ function TaskCalendarView({ tasks }: { tasks: any[] }) {
   );
 }
 
+function TimeElapsed({ start, className }: { start: string, className?: string }) {
+  const [elapsed, setElapsed] = useState('');
+
+  useEffect(() => {
+    if (!start) return;
+    const update = () => {
+      let ms = Date.now() - new Date(start).getTime();
+      if (ms < 0) ms = 0; // Prevent negative time
+      const minutes = Math.floor(ms / 60000);
+      const hours = Math.floor(minutes / 60);
+      if (hours > 0) {
+        setElapsed(`${hours}h ${minutes % 60}m`);
+      } else {
+        setElapsed(`${minutes}m`);
+      }
+    };
+    update();
+    const interval = setInterval(update, 60000);
+    return () => clearInterval(interval);
+  }, [start]);
+
+  if (!start) return null;
+  return <span className={className}>{elapsed}</span>;
+}
+
+function OperarioActivityModal({ operario, registros, onClose }: { operario: any, registros: any[], onClose: () => void }) {
+  React.useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = 'unset'; };
+  }, []);
+
+  // Filter logs for this operario only, from today
+  const todayStr = getArgentinaDate();
+  const opLogs = registros
+    .filter(r => r.operario_nombre === operario.nombre && formatArgDate(r.inicio) === todayStr)
+    .sort((a,b) => new Date(b.inicio).getTime() - new Date(a.inicio).getTime());
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[80vh]"
+      >
+        <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
+              <UserCircle className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="font-bold text-slate-800 text-sm">{operario.nombre}</h3>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-left">Actividad del Día</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 bg-white rounded-full text-slate-400 hover:text-rose-500 hover:bg-rose-50 transition-colors shadow-sm">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        
+        <div className="flex-1 overflow-y-auto p-5">
+          {opLogs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-40 text-slate-400">
+              <History className="w-8 h-8 mb-2 opacity-50" />
+              <p className="text-xs font-bold uppercase tracking-widest">Sin actividad hoy</p>
+            </div>
+          ) : (
+            <div className="space-y-4 relative before:absolute before:inset-y-0 before:left-[11px] before:w-0.5 before:bg-slate-100 ml-2">
+              {opLogs.map((log, idx) => (
+                <div key={log.id || idx} className="relative pl-8">
+                  <div className={cn(
+                    "absolute left-0 w-6 h-6 rounded-full border-2 border-white flex items-center justify-center translate-x-[-11px]",
+                    log.accion?.includes('Turno') ? "bg-emerald-100 text-emerald-600" :
+                    log.accion?.includes('Descanso') ? "bg-amber-100 text-amber-600" :
+                    "bg-blue-100 text-blue-600"
+                  )}>
+                    {log.accion?.includes('Turno') ? <Play className="w-3 h-3" /> :
+                     log.accion?.includes('Descanso') ? <PauseCircle className="w-3 h-3" /> :
+                     <CheckCircle2 className="w-3 h-3" />}
+                  </div>
+                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                    <p className="text-xs font-bold text-slate-700 mb-1">{log.accion}</p>
+                    <div className="flex items-center gap-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                      <span>{formatArgTime(log.inicio)}</span>
+                      {log.fin && (
+                        <>
+                          <span>-</span>
+                          <span>{formatArgTime(log.fin)}</span>
+                          <span className="text-blue-500 bg-blue-50 px-1.5 rounded">{log.duracion_minutos}m</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 function OperarioStatusGrid({ operarios, registros }: { operarios: any[], registros: any[] }) {
+  const [selectedOp, setSelectedOp] = useState<any>(null);
+
   const currentStates = React.useMemo(() => {
     return operarios.map(op => {
       // Find the latest record for this operario in the current session (last 12h)
@@ -4113,7 +4538,7 @@ function OperarioStatusGrid({ operarios, registros }: { operarios: any[], regist
       
       const latest = opLogs[0];
       
-      if (!latest) return { ...op, status: 'offline', task: null, delayed: false };
+      if (!latest) return { ...op, status: 'offline', task: null, delayed: false, startTime: null };
       
       // Check for delay if they just started (first log of the day includes "Turno")
       let isDelayed = false;
@@ -4127,34 +4552,107 @@ function OperarioStatusGrid({ operarios, registros }: { operarios: any[], regist
         }
       }
 
+      const startTime = latest.inicio;
+
       // If the latest record has no 'fin', they are active in that action
       if (!latest.fin) {
-        if (latest.accion.includes('Descanso')) return { ...op, status: 'rest', task: 'En Descanso', delayed: isDelayed };
-        if (latest.accion.includes('Turno')) return { ...op, status: 'active', task: 'Disponible / Sin tarea', delayed: isDelayed };
-        if (latest.accion.includes('Tarea:')) return { ...op, status: 'active', task: latest.accion.replace('Tarea: ', ''), delayed: isDelayed };
-        return { ...op, status: 'active', task: latest.accion, delayed: isDelayed };
+        if (latest.accion.includes('Descanso')) return { ...op, status: 'rest', task: 'En Descanso', delayed: isDelayed, startTime };
+        if (latest.accion.includes('Turno')) return { ...op, status: 'active', task: 'Disponible / Sin tarea', delayed: isDelayed, startTime };
+        if (latest.accion.includes('Tarea:')) return { ...op, status: 'active', task: latest.accion.replace('Tarea: ', ''), delayed: isDelayed, startTime };
+        return { ...op, status: 'active', task: latest.accion, delayed: isDelayed, startTime };
       }
       
       // If the latest record has 'fin', but it was a "Turno (Tramo)" or "Tarea" ending, they might be idle
       // For simplicity, if finished less than 5 mins ago, mark as "Idle", otherwise "Offline"
       const finTime = new Date(latest.fin).getTime();
       const now = Date.now();
-      if (now - finTime < 5 * 60 * 1000) return { ...op, status: 'idle', task: 'Recién terminó tarea' };
+      if (now - finTime < 5 * 60 * 1000) return { ...op, status: 'idle', task: 'Recién terminó tarea', startTime: latest.fin };
       
-      return { ...op, status: 'offline', task: null };
+      return { ...op, status: 'offline', task: null, startTime: null };
     });
   }, [operarios, registros]);
 
   return (
-    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6">
-      <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2 text-sm uppercase tracking-wider">
-        <Activity className="w-5 h-5 text-emerald-500" /> Estado del Personal
-      </h3>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+      <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+        <h3 className="font-bold text-slate-800 flex items-center gap-2 text-sm uppercase tracking-wider">
+          <Activity className="w-5 h-5 text-emerald-500" /> Estado del Personal
+        </h3>
+      </div>
+      
+      {/* Desktop List View */}
+      <div className="hidden md:block overflow-x-auto">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-200">
+              <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest w-1/4">Operario</th>
+              <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest w-1/6">Estado</th>
+              <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest w-1/3">Actividad Actual</th>
+              <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Duración</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {currentStates.map((op, idx) => (
+              <tr 
+                key={idx} 
+                onClick={() => setSelectedOp(op)}
+                className="hover:bg-blue-50/50 cursor-pointer transition-colors group"
+              >
+                <td className="px-6 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="relative">
+                      <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 group-hover:bg-blue-100 group-hover:text-blue-500 transition-colors">
+                        <UserCircle className="w-5 h-5" />
+                      </div>
+                      <div className={cn(
+                        "absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white",
+                        op.status === 'active' ? "bg-emerald-500" : 
+                        op.status === 'rest' ? "bg-amber-500" :
+                        op.status === 'idle' ? "bg-blue-400" : "bg-slate-300"
+                      )}></div>
+                    </div>
+                    <div>
+                      <span className="text-sm font-bold text-slate-700 block">{op.nombre}</span>
+                      {op.delayed && <span className="bg-rose-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded uppercase inline-block mt-0.5">Atrasado</span>}
+                    </div>
+                  </div>
+                </td>
+                <td className="px-6 py-4">
+                  <span className={cn(
+                    "text-[9px] font-black uppercase px-2 py-1 rounded-md",
+                    op.status === 'active' ? "bg-emerald-100 text-emerald-700" : 
+                    op.status === 'rest' ? "bg-amber-100 text-amber-700" :
+                    op.status === 'idle' ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-500"
+                  )}>
+                    {op.status === 'active' ? 'Activo' : op.status === 'rest' ? 'Descanso' : op.status === 'idle' ? 'Libre' : 'Offline'}
+                  </span>
+                </td>
+                <td className="px-6 py-4">
+                  <span className="text-xs text-slate-600 font-medium">
+                    {op.task || '-'}
+                  </span>
+                </td>
+                <td className="px-6 py-4">
+                  {op.startTime ? (
+                    <TimeElapsed start={op.startTime} className="text-xs font-bold text-slate-500" />
+                  ) : <span className="text-xs text-slate-400">-</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Mobile Card View */}
+      <div className="md:hidden grid grid-cols-1 gap-4 p-4 bg-slate-50/50">
         {currentStates.map((op, idx) => (
-          <div key={idx} className="p-4 rounded-2xl border border-slate-100 bg-slate-50 flex items-center gap-4">
+          <div 
+            key={idx} 
+            onClick={() => setSelectedOp(op)}
+            className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4 cursor-pointer active:scale-[0.98] transition-transform"
+          >
             <div className="relative">
-              <div className="w-12 h-12 rounded-full bg-slate-200 flex items-center justify-center text-slate-400">
+              <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-400">
                 <UserCircle className="w-8 h-8" />
               </div>
               <div className={cn(
@@ -4164,14 +4662,14 @@ function OperarioStatusGrid({ operarios, registros }: { operarios: any[], regist
                 op.status === 'idle' ? "bg-blue-400" : "bg-slate-300"
               )}></div>
             </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1 flex flex-col justify-center">
+              <div className="flex items-center gap-2 mb-1">
                 <p className="text-sm font-bold text-slate-800 truncate">{op.nombre}</p>
                 {op.delayed && (
-                  <span className="bg-rose-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded uppercase animate-pulse">Atrasado</span>
+                  <span className="bg-rose-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded uppercase">Atrasado</span>
                 )}
               </div>
-              <div className="flex items-center gap-1.5 mt-0.5">
+              <div className="flex flex-col gap-1 items-start">
                 <span className={cn(
                   "text-[9px] font-black uppercase px-1.5 py-0.5 rounded",
                   op.status === 'active' ? "bg-emerald-100 text-emerald-700" : 
@@ -4181,15 +4679,32 @@ function OperarioStatusGrid({ operarios, registros }: { operarios: any[], regist
                   {op.status === 'active' ? 'Activo' : op.status === 'rest' ? 'Descanso' : op.status === 'idle' ? 'Libre' : 'Offline'}
                 </span>
                 {op.task && (
-                  <span className="text-[10px] text-slate-400 truncate font-medium">
-                    • {op.task}
-                  </span>
+                  <div className="flex items-center gap-1 w-full text-slate-500">
+                    <span className="text-[10px] truncate max-w-[120px] font-medium" title={op.task}>
+                      {op.task}
+                    </span>
+                    {op.startTime && (
+                      <>
+                        <span className="text-[8px] mx-0.5 opacity-50">•</span>
+                        <TimeElapsed start={op.startTime} className="text-[10px] font-bold text-slate-400 shrink-0" />
+                      </>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
+            <ChevronRight className="w-5 h-5 text-slate-300" />
           </div>
         ))}
       </div>
+
+      {selectedOp && (
+        <OperarioActivityModal 
+          operario={selectedOp} 
+          registros={registros} 
+          onClose={() => setSelectedOp(null)} 
+        />
+      )}
     </div>
   );
 }
@@ -4225,7 +4740,9 @@ function UserProfile({ user, onUpdate }: { user: Operario, onUpdate: (u: Operari
         pin,
         whatsapp: fullWhatsapp
       };
-      await supabase.from('users').update(updates).eq('id', user.id);
+      const { error: updateError } = await supabase.from('users').update(updates).eq('id', user.id);
+      if (updateError) throw updateError;
+      
       onUpdate({ ...user, ...updates });
       setMsg({ text: 'Perfil actualizado con éxito', type: 'success' });
     } catch (err: any) {
@@ -4361,26 +4878,32 @@ function PersonalManagement() {
     if (!user.id) return;
     const nextRole = user.rol === 'supervisor' ? 'operario' : 'supervisor';
     try {
-      await supabase.from('users').update({ rol: nextRole }).eq('id', user.id);
+      const { error } = await supabase.from('users').update({ rol: nextRole }).eq('id', user.id);
+      if (error) throw error;
     } catch (err) {
       console.error(err);
+      alert('Error al cambiar rol');
     }
   };
 
   const toggleActive = async (user: Operario) => {
     if (!user.id) return;
     try {
-      await supabase.from('users').update({ activo: !user.activo }).eq('id', user.id);
+      const { error } = await supabase.from('users').update({ activo: !user.activo }).eq('id', user.id);
+      if (error) throw error;
     } catch (err) {
       console.error(err);
+      alert('Error al cambiar estado');
     }
   };
 
   const deleteUser = async (userId: string) => {
     try {
-      await supabase.from('users').delete().eq('id', userId);
+      const { error } = await supabase.from('users').delete().eq('id', userId);
+      if (error) throw error;
     } catch (err) {
       console.error(err);
+      alert('Error al eliminar usuario');
     }
   };
 
@@ -4400,14 +4923,16 @@ function PersonalManagement() {
       };
       
       if (editingUser.id) {
-        await supabase.from('users').update(userData).eq('id', editingUser.id);
+        const { error } = await supabase.from('users').update(userData).eq('id', editingUser.id);
+        if (error) throw error;
       } else {
         const customId = u!.toLowerCase();
-        await supabase.from('users').insert({
+        const { error } = await supabase.from('users').insert({
            ...userData,
            id: customId,
            activo: true
         });
+        if (error) throw error;
       }
       setEditingUser(null);
     } catch (err) {
@@ -4601,9 +5126,24 @@ function PersonalManagement() {
   );
 }
 
-function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario, onLogout: () => void, onUserUpdate: (u: Operario) => void }) {
+function SupervisorDashboard({ 
+  user, 
+  onLogout, 
+  onUserUpdate,
+  targetCoords,
+  setTargetCoords,
+  currentCoords
+}: { 
+  user: Operario, 
+  onLogout: () => void, 
+  onUserUpdate: (u: Operario) => void,
+  targetCoords: {lat: number, lng: number} | null,
+  setTargetCoords: (coords: {lat: number, lng: number} | null) => void,
+  currentCoords: {lat: number, lng: number} | null
+}) {
   const installProps = usePWAInstall();
   const [showPWAHelp, setShowPWAHelp] = useState(false);
+  const [showReport, setShowReport] = useState(false);
   const [tab, setTab] = useState<'dashboard' | 'gestion' | 'analitica' | 'incidencias' | 'config'>('dashboard');
   const [subTab, setSubTab] = useState<string>('general');
   const [registros, setRegistros] = useState<any[]>([]);
@@ -4653,7 +5193,12 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
 
       const fetchTasks = async () => {
         try {
-          const { data } = await supabase.from('tasks').select('*').order('created_at', { ascending: false });
+          let query = supabase.from('tasks').select('*');
+          if (user.rol === 'operario') {
+            query = query.or(`created_by_id.eq.${user.id},asignados.cs.{${user.nombre}}`);
+          }
+          const { data } = await query
+            .order('created_at', { ascending: false });
           setTasks(data || []);
         } catch (error) {
           console.error(error);
@@ -4713,22 +5258,97 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
 
   // Analytics Helpers
   const metrics = React.useMemo(() => {
-    if (!registros) return { totalMinutes: 0, avgTask: 0, activeNow: 0 };
+    if (!registros) return { totalMinutes: 0, avgTask: 0, activeNow: 0, assignedTasks: 0, efficacy: 0, totalHours: '0.0', completedTasks: 0, activeOps: 0, totalHoursNum: 0 };
     const totalMinutes = registros.reduce((acc, r) => acc + (r.duracion_minutos || 0), 0);
-    const completedTasks = registros.filter(r => r.accion && !r.accion.includes('Turno') && !r.accion.includes('Descanso') && !r.accion.startsWith('Inicio') && !r.accion.startsWith('Fin') && !r.accion.includes('Sesión')).length;
+    const completedTasksList = registros.filter(r => r.fin && r.accion && !r.accion.includes('Turno') && !r.accion.includes('Descanso') && !r.accion.startsWith('Inicio') && !r.accion.startsWith('Fin') && !r.accion.includes('Sesión'));
+    const completedTasks = completedTasksList.length;
     const activeOps = new Set(registros.filter(r => {
       const now = new Date();
       const startTime = new Date(r.inicio);
-      return !r.fin && (now.getTime() - startTime.getTime() < 12 * 60 * 60 * 1000); // Simple "still active" check if no end time and recent
+      return !r.fin && (now.getTime() - startTime.getTime() < 12 * 60 * 60 * 1000); 
     }).map(r => r.operario_nombre)).size;
+
+    const assignedTasks = tasks.length;
+    const efficacy = assignedTasks > 0 ? Math.min(100, Math.round((completedTasks / assignedTasks) * 100)) : 0;
 
     return {
       totalHours: (totalMinutes / 60).toFixed(1),
+      totalHoursNum: (totalMinutes / 60),
       completedTasks,
-      activeOps: registros.filter(r => !r.fin).length, // Simplified for demo
-      avgTask: completedTasks > 0 ? (totalMinutes / completedTasks).toFixed(0) : 0
+      activeOps,
+      avgTask: completedTasks > 0 ? (totalMinutes / completedTasks).toFixed(0) : 0,
+      assignedTasks,
+      efficacy
     };
-  }, [registros]);
+  }, [registros, tasks]);
+
+  const generatePDFReport = () => {
+    const doc = new jsPDF() as any;
+    const today = getArgentinaDate();
+    
+    // Header
+    doc.setFontSize(22);
+    doc.setTextColor(30, 41, 59); // slate-800
+    doc.text("Reporte Diario de Limpieza", 14, 22);
+    
+    doc.setFontSize(10);
+    doc.setTextColor(100, 116, 139); // slate-400
+    doc.text(`Fecha: ${today}`, 14, 28);
+    doc.text(`Supervisor: ${user.nombre}`, 14, 33);
+    
+    // Summary Cards
+    doc.setDrawColor(226, 232, 240); // slate-200
+    doc.setFillColor(248, 250, 252); // slate-50
+    doc.roundedRect(14, 40, 42, 25, 3, 3, 'FD');
+    doc.roundedRect(60, 40, 42, 25, 3, 3, 'FD');
+    doc.roundedRect(106, 40, 42, 25, 3, 3, 'FD');
+    doc.roundedRect(152, 40, 42, 25, 3, 3, 'FD');
+    
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text("TAREAS ASIGNADAS", 16, 46);
+    doc.text("TAREAS REALIZADAS", 62, 46);
+    doc.text("EFICACIA", 108, 46);
+    doc.text("HORAS TOTALES", 154, 46);
+    
+    doc.setFontSize(14);
+    doc.setTextColor(30, 41, 59);
+    doc.text(metrics.assignedTasks.toString(), 16, 56);
+    doc.text(metrics.completedTasks.toString(), 62, 56);
+    doc.text(`${metrics.efficacy}%`, 108, 56);
+    doc.text(`${metrics.totalHours}h`, 154, 56);
+    
+    // Detailed Table
+    const tableData = registros.map(r => [
+      r.operario_nombre,
+      r.accion,
+      formatArgTime(r.inicio),
+      r.fin ? formatArgTime(r.fin) : 'En proceso',
+      `${r.duracion_minutos || 0} min`
+    ]);
+    
+    doc.autoTable({
+      startY: 75,
+      head: [['Operario', 'Actividad', 'Inicio', 'Fin', 'Duración']],
+      body: tableData,
+      headStyles: { fillColor: [59, 130, 246], textColor: 255, fontSize: 10, fontStyle: 'bold' },
+      bodyStyles: { fontSize: 9, textColor: 51 },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      margin: { top: 75 },
+    });
+    
+    doc.save(`Reporte_Limpieza_${today.replace(/\//g, '-')}.pdf`);
+  };
+
+  if (showReport) {
+    return <DailyReportScreen 
+             operarios={operarios} 
+             registros={registros} 
+             tasks={tasks} 
+             supervisorName={user.nombre} 
+             onBack={() => setShowReport(false)} 
+           />;
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-800">
@@ -4876,44 +5496,54 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
 
       <div className="p-4 sm:p-8 flex-1 max-w-5xl mx-auto w-full flex flex-col gap-6">
         
-        {user.pin && ['1', '1211', '1234'].includes(user.pin) && (
-          <div className="bg-amber-100/50 p-4 rounded-2xl border border-amber-200">
-             <p className="text-amber-800 text-xs font-bold leading-relaxed flex items-start gap-2">
-               <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5" />
-               Tu PIN actual es el de por defecto. Para mayor seguridad, te recomendamos cambiarlo desde la sección "Mi Perfil".
-             </p>
-          </div>
-        )}
 
         {/* TAB CONTENT (Controlled by Sidebar Menu) */}
         {tab === 'dashboard' && (
           <div className="flex flex-col gap-6">
             {/* KPI ROW */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <KPICard title="Horas Totales" value={metrics.totalHours + 'h'} icon={<Clock className="w-5 h-5 text-blue-500"/>} trend="+5%" />
-              <KPICard title="Tareas Realizadas" value={metrics.completedTasks} icon={<CheckCircle2 className="w-5 h-5 text-emerald-500"/>} trend="+12" />
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+              <KPICard title="Tareas Asignadas" value={metrics.assignedTasks} icon={<ClipboardList className="w-5 h-5 text-blue-500"/>} trend="Total" />
+              <KPICard title="Tareas Realizadas" value={metrics.completedTasks} icon={<CheckCircle2 className="w-5 h-5 text-emerald-500"/>} trend="Hoy" />
+              <KPICard title="Eficacia" value={metrics.efficacy + '%'} icon={<Activity className="w-5 h-5 text-indigo-500"/>} sub="Completadas vs Asignadas" />
               <KPICard title="Personal Activo" value={metrics.activeOps} icon={<UserCircle className="w-5 h-5 text-amber-500"/>} trend="Vivo" />
-              <KPICard title="Eficacia Media" value={metrics.avgTask + 'm'} icon={<RefreshCcw className="w-5 h-5 text-indigo-500"/>} sub="Min/Tarea" />
+              
+              <button 
+                onClick={() => setShowReport(true)}
+                className="bg-slate-900 border border-slate-800 p-4 rounded-3xl flex flex-col justify-between hover:bg-slate-800 transition-all text-left shadow-xl shadow-slate-200 group"
+              >
+
+                <div className="flex justify-between items-start mb-2">
+                  <div className="p-2 bg-blue-500/20 rounded-xl text-blue-400 group-hover:bg-blue-500 group-hover:text-white transition-all">
+                    <Download className="w-5 h-5" />
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Descargar PDF</p>
+                  <p className="text-sm font-bold text-white uppercase tracking-tight">Reporte Diario</p>
+                </div>
+              </button>
             </div>
 
             <OperarioStatusGrid operarios={operarios} registros={registros} />
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-               <ActivityFeed registros={registros} />
-               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-                  <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                    <Plus className="w-5 h-5 text-rose-500" /> Alertas Críticas
-                  </h3>
-                  <div className="space-y-3">
-                    {stock.filter(s => s.stock < 5).map(s => (
-                      <div key={s.id} className="flex items-center justify-between p-3 bg-rose-50 rounded-xl border border-rose-100">
-                          <span className="text-sm font-bold text-slate-700">{s.nombre}</span>
-                          <span className="text-xs font-black text-rose-600 bg-white px-2 py-1 rounded-lg">Stock: {s.stock}</span>
-                      </div>
-                    ))}
-                    {stock.filter(s => s.stock < 5).length === 0 && <p className="text-slate-400 text-sm italic">Sin alertas detectadas.</p>}
+            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm mb-6">
+              <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                <Plus className="w-5 h-5 text-rose-500" /> Alertas Críticas (Insumos Escasos)
+              </h3>
+              <div className="space-y-3">
+                {stock.filter(s => s.stock < 5).map(s => (
+                  <div key={s.id} className="flex items-center justify-between p-3 bg-rose-50 rounded-xl border border-rose-100">
+                      <span className="text-sm font-bold text-slate-700">{s.nombre}</span>
+                      <span className="text-xs font-black text-rose-600 bg-white px-2 py-1 rounded-lg border border-rose-100">Stock: {s.stock}</span>
                   </div>
-               </div>
+                ))}
+                {stock.filter(s => s.stock < 5).length === 0 && (
+                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 flex flex-col items-center justify-center text-center">
+                    <CheckCircle2 className="w-8 h-8 text-emerald-400 mb-2" />
+                    <p className="text-slate-400 text-xs font-bold uppercase tracking-widest">Sin alertas detectadas.</p>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -4932,7 +5562,7 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
                 >{st}</button>
               ))}
             </div>
-            {subTab === 'tareas' && <SupervisorTasksManager />}
+            {subTab === 'tareas' && <SupervisorTasksManager user={user} />}
             {subTab === 'turnos' && <SupervisorShiftManager />}
             {subTab === 'stock' && <SupervisorStockManager />}
           </div>
@@ -4970,13 +5600,13 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
 
         {tab === 'config' && (
           <div className="flex flex-col gap-6">
-            <div className="bg-white p-1.5 rounded-2xl border border-slate-200 flex gap-2 w-full max-w-md mx-auto sticky top-20 z-40 shadow-sm">
-              {['anuncios', 'personal', 'perfil'].map(st => (
+            <div className="bg-white p-1.5 rounded-2xl border border-slate-200 flex gap-2 w-full max-w-md mx-auto sticky top-20 z-40 shadow-sm overflow-x-auto">
+              {['anuncios', 'personal', 'ubicacion', 'perfil'].map(st => (
                 <button 
                   key={st}
                   onClick={() => setSubTab(st)}
                   className={cn(
-                    "flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all",
+                    "flex-1 py-3 px-4 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap",
                     subTab === st ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:bg-slate-50"
                   )}
                 >{st}</button>
@@ -4984,6 +5614,76 @@ function SupervisorDashboard({ user, onLogout, onUserUpdate }: { user: Operario,
             </div>
             {subTab === 'anuncios' && <SupervisorAnnouncements />}
             {subTab === 'personal' && <PersonalManagement />}
+            {subTab === 'ubicacion' && (
+              <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-xl max-w-2xl mx-auto w-full">
+                <h3 className="text-lg font-black text-slate-800 mb-6 flex items-center gap-3">
+                  <MapPin className="w-6 h-6 text-blue-500" /> Perímetro de Trabajo
+                </h3>
+                <p className="text-xs text-slate-500 font-medium mb-6 leading-relaxed">
+                  Establece el punto central donde los operarios deben estar para poder iniciar su jornada. Los ingresos se bloquearán si están a más de 300 metros de este punto.
+                </p>
+
+                <div className="space-y-6">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                      <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">Latitud Objetivo</span>
+                      <span className="text-sm font-bold text-slate-700 font-mono">{targetCoords?.lat.toFixed(6) || 'No definida'}</span>
+                    </div>
+                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                      <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">Longitud Objetivo</span>
+                      <span className="text-sm font-bold text-slate-700 font-mono">{targetCoords?.lng.toFixed(6) || 'No definida'}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-3">
+                    <button 
+                      onClick={() => {
+                        if (currentCoords) {
+                          setTargetCoords(currentCoords);
+                          alert("Ubicación objetivo actualizada a tu posición actual.");
+                        } else {
+                          alert("No se detecta tu ubicación actual. Asegúrate de tener el GPS activado.");
+                        }
+                      }}
+                      className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-slate-200 hover:bg-slate-800 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+                    >
+                      <MapPin className="w-4 h-4" /> USAR MI UBICACIÓN ACTUAL
+                    </button>
+                    
+                    <button 
+                      onClick={() => {
+                        if (confirm("¿Seguro que deseas eliminar el bloqueo GPS?")) {
+                          setTargetCoords(null);
+                        }
+                      }}
+                      className="w-full py-4 bg-white text-rose-500 border-2 border-rose-100 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-rose-50 transition-all"
+                    >
+                      ELIMINAR BLOQUEO GPS
+                    </button>
+                  </div>
+
+                  {targetCoords && currentCoords && (
+                    <div className="mt-6 p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Activity className="w-5 h-5 text-blue-500" />
+                        <div>
+                          <p className="text-[10px] font-black text-blue-600 uppercase">Distancia Actual</p>
+                          <p className="text-sm font-bold text-slate-700">{Math.round(calculateDistance(currentCoords.lat, currentCoords.lng, targetCoords.lat, targetCoords.lng))} metros</p>
+                        </div>
+                      </div>
+                      <div className={cn(
+                        "px-3 py-1 rounded-full text-[10px] font-black uppercase",
+                        calculateDistance(currentCoords.lat, currentCoords.lng, targetCoords.lat, targetCoords.lng) <= 300 
+                        ? "bg-emerald-100 text-emerald-600" 
+                        : "bg-rose-100 text-rose-600"
+                      )}>
+                        {calculateDistance(currentCoords.lat, currentCoords.lng, targetCoords.lat, targetCoords.lng) <= 300 ? 'Dentro del radio' : 'Fuera de radio'}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             {subTab === 'perfil' && <UserProfile user={user} onUpdate={onUserUpdate} />}
           </div>
         )}

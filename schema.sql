@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS public.tasks (
     last_completed_date TEXT,
     last_completed_by TEXT,
     asignados TEXT[], -- Array of names
+    created_by_id TEXT, -- User ID of the creator
     duracion_estimada_minutos INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
@@ -60,6 +61,8 @@ CREATE TABLE IF NOT EXISTS public.announcements (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     text TEXT NOT NULL,
     date TEXT,
+    start_time TEXT,
+    end_time TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 

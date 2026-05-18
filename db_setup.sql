@@ -51,14 +51,17 @@ CREATE INDEX IF NOT EXISTS idx_logs_operario_nombre ON public.logs(operario_nomb
 CREATE TABLE IF NOT EXISTS public.tasks (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   titulo TEXT NOT NULL,
+  frecuencia TEXT NOT NULL DEFAULT 'Diaria',
+  tipo_limpieza TEXT DEFAULT 'Mantenimiento',
   descripcion TEXT,
-  dia TEXT,
-  inicio TEXT,
-  fin TEXT,
-  color TEXT,
-  area TEXT,
-  recurrence TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  fecha_vencimiento TEXT,
+  last_completed_date TEXT,
+  last_completed_by TEXT,
+  asignados TEXT[], -- Array of names
+  created_by_id TEXT, -- User ID of the creator
+  duracion_estimada_minutos INTEGER,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON public.tasks(created_at);
@@ -84,16 +87,14 @@ CREATE INDEX IF NOT EXISTS idx_incidents_created_at ON public.incidents(created_
 -- 5. Crear tabla de Anuncios (announcements)
 CREATE TABLE IF NOT EXISTS public.announcements (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  titulo TEXT NOT NULL,
-  mensaje TEXT NOT NULL,
-  fecha TEXT,
-  prioridad TEXT DEFAULT 'normal',
-  leido_por JSONB DEFAULT '[]'::jsonb,
+  text TEXT NOT NULL,
+  date TEXT,
+  start_time TEXT,
+  end_time TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Índice GIN para buscar rápidamente en JSONB leido_por
-CREATE INDEX IF NOT EXISTS idx_announcements_leido_por ON public.announcements USING GIN (leido_por);
+
 
 -- 6. Crear tabla de Insumos (insumos)
 CREATE TABLE IF NOT EXISTS public.insumos (
