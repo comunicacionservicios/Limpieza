@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { jsPDF } from "jspdf";
 import "jspdf-autotable";
-import { Clock, Play, Square, PauseCircle, LogOut, CheckCircle2, PlusCircle, UserCircle, Users, RefreshCcw, Plus, Calendar, FileText, ClipboardList, ShieldAlert, Bell, Menu, X, Activity, WifiOff, Coffee, Monitor, LayoutGrid, MoveRight, MapPin, AlertTriangle, Package, ShieldCheck, ChevronRight, Camera, Key, Home, BarChart2, Megaphone, History, Trash2, Edit3, Settings, Shield, Download } from 'lucide-react';
+import { Clock, Play, Square, PauseCircle, LogOut, CheckCircle2, PlusCircle, UserCircle, Users, RefreshCcw, Plus, Calendar, FileText, ClipboardList, ShieldAlert, Bell, Menu, X, Activity, WifiOff, Coffee, Monitor, LayoutGrid, MoveRight, MapPin, AlertTriangle, Package, ShieldCheck, ChevronRight, ChevronDown, Camera, Key, Home, BarChart2, Megaphone, History, Trash2, Edit3, Settings, Shield, Download } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -306,7 +306,34 @@ function SupervisorIncidentsLog() {
 }
 
 function SupervisorProductivityStats({ registros, operarios, tasks }: { registros: any[], operarios: any[], tasks: any[] }) {
+  const [filterType, setFilterType] = React.useState<'diario' | 'semanal' | 'mensual' | 'custom'>('diario');
+  const [customStart, setCustomStart] = React.useState('');
+  const [customEnd, setCustomEnd] = React.useState('');
+
   const stats = React.useMemo(() => {
+    const today = new Date();
+    let startDateObj: Date | null = null;
+    let endDateObj: Date | null = null;
+
+    if (filterType === 'diario') {
+      startDateObj = new Date();
+      startDateObj.setHours(0,0,0,0);
+      endDateObj = new Date();
+      endDateObj.setHours(23,59,59,999);
+    } else if (filterType === 'semanal') {
+      startDateObj = new Date();
+      startDateObj.setDate(today.getDate() - 7);
+      startDateObj.setHours(0,0,0,0);
+      endDateObj = new Date();
+      endDateObj.setHours(23,59,59,999);
+    } else if (filterType === 'mensual') {
+      startDateObj = new Date(today.getFullYear(), today.getMonth(), 1);
+      endDateObj = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+    } else if (filterType === 'custom' && customStart && customEnd) {
+      startDateObj = new Date(customStart + 'T00:00:00');
+      endDateObj = new Date(customEnd + 'T23:59:59');
+    }
+
     const operarioStats: Record<string, { completed: number, totalTime: number }> = {};
     
     // Initialize
@@ -314,7 +341,13 @@ function SupervisorProductivityStats({ registros, operarios, tasks }: { registro
       operarioStats[op.nombre] = { completed: 0, totalTime: 0 };
     });
 
-    const completedTasks = registros.filter(r => r.accion?.includes('Tarea:') && r.fin);
+    const completedTasks = registros.filter(r => {
+      if (!r.accion?.includes('Tarea:') || !r.fin) return false;
+      
+      if (!startDateObj || !endDateObj) return true;
+      let recDate = new Date(r.inicio);
+      return recDate >= startDateObj && recDate <= endDateObj;
+    });
     
     completedTasks.forEach(r => {
       if (operarioStats[r.operario_nombre]) {
@@ -330,22 +363,68 @@ function SupervisorProductivityStats({ registros, operarios, tasks }: { registro
     })).filter(d => d.tasks > 0 || operarios.length < 10);
 
     const totalCompleted = completedTasks.length;
-    const planCount = tasks.length || 1;
+    let planCount = tasks.length || 1;
+    // Ajustar planCount sg los dias si es necesario o dejarlo para el mes
+    const days = startDateObj && endDateObj ? Math.max(1, Math.ceil((endDateObj.getTime() - startDateObj.getTime()) / (1000 * 3600 * 24))) : 1;
+    planCount = planCount * days; // Aproximacion base
+    if (planCount === 0) planCount = 1;
+
     const compliance = Math.min(100, Math.round((totalCompleted / planCount) * 100));
 
-    return { chartData, totalCompleted, compliance };
-  }, [registros, operarios, tasks]);
+    return { chartData, totalCompleted, compliance, planCount };
+  }, [registros, operarios, tasks, filterType, customStart, customEnd]);
 
   const COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899'];
 
   return (
     <div className="flex flex-col gap-8">
+      <div className="flex flex-col md:flex-row gap-4 items-end bg-white p-4 rounded-3xl shadow-sm border border-slate-200">
+        <div className="flex-1">
+          <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 block ml-1">Periodo del Reporte</label>
+          <div className="flex bg-slate-100 p-1 rounded-2xl w-full max-w-md">
+            <button 
+              onClick={() => setFilterType('diario')}
+              className={cn("flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all", filterType === 'diario' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}
+            >Diario</button>
+            <button 
+              onClick={() => setFilterType('semanal')}
+              className={cn("flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all", filterType === 'semanal' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}
+            >Semanal</button>
+            <button 
+              onClick={() => setFilterType('mensual')}
+              className={cn("flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all", filterType === 'mensual' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}
+            >Mensual</button>
+            <button 
+              onClick={() => setFilterType('custom')}
+              className={cn("flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all", filterType === 'custom' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}
+            >Personalizado</button>
+          </div>
+        </div>
+        {filterType === 'custom' && (
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <input 
+              type="date" 
+              className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none focus:border-blue-400"
+              value={customStart}
+              onChange={e => setCustomStart(e.target.value)}
+            />
+            <span className="text-slate-400 font-bold">a</span>
+            <input 
+              type="date" 
+              className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none focus:border-blue-400"
+              value={customEnd}
+              onChange={e => setCustomEnd(e.target.value)}
+            />
+          </div>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <KPICard 
           title="Tareas Completadas" 
           value={stats.totalCompleted} 
           icon={<CheckCircle2 className="w-6 h-6 text-emerald-500" />} 
-          trend="+12%"
+          trend="En el periodo"
           sub="Total en el periodo seleccionado"
         />
         <KPICard 
@@ -353,7 +432,7 @@ function SupervisorProductivityStats({ registros, operarios, tasks }: { registro
           value={`${stats.compliance}%`} 
           icon={<Activity className="w-6 h-6 text-blue-500" />} 
           trend={stats.compliance > 80 ? "Óptimo" : "Atención"}
-          sub={`vs ${tasks.length} tareas planificadas`}
+          sub={`vs ~${stats.planCount} planificadas`}
         />
         <KPICard 
           title="Productividad Media" 
@@ -3902,16 +3981,123 @@ function KPICard({ title, value, icon, trend, sub }: any) {
 
 
 
+function OperarioAccordion({ metric }: { metric: any }) {
+  const [isOpen, setIsOpen] = useState(false);
+  return (
+    <div className="bg-white border-b border-[#c6c6cd] last:border-0 hover:bg-[#f2f4f6]/50 transition-colors">
+      <button 
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center justify-between px-4 py-4 text-left focus:outline-none focus:bg-[#f2f4f6]"
+      >
+        <div className="flex-1 grid grid-cols-7 items-center text-[10px] sm:text-xs">
+          <div className="px-1 font-bold text-slate-800 overflow-hidden text-ellipsis whitespace-nowrap">{metric.nombre}</div>
+          <div className="px-1 text-center font-mono text-slate-500">{metric.inicio}</div>
+          <div className="px-1 text-center font-mono text-slate-500">{metric.fin}</div>
+          <div className="px-1 text-center font-mono font-bold text-slate-700">{metric.duracion}</div>
+          <div className="px-1 text-center font-mono text-slate-500">{metric.assigned}</div>
+          <div className="px-1 text-center font-mono text-slate-500">{metric.completed}</div>
+          <div className={cn("px-1 font-black text-center", metric.efficacy >= 90 ? "text-emerald-600" : metric.efficacy >= 70 ? "text-amber-600" : "text-rose-600")}>
+            {metric.efficacy}%
+          </div>
+        </div>
+        {metric.dailyStats && metric.dailyStats.length > 0 ? (
+          <ChevronDown className={cn("w-5 h-5 text-slate-400 shrink-0 transition-transform", isOpen && "rotate-180")} />
+        ) : (
+          <div className="w-5 h-5 shrink-0" />
+        )}
+      </button>
+      
+      {isOpen && metric.dailyStats && metric.dailyStats.length > 0 && (
+         <div className="bg-[#f2f4f6] px-6 pb-6 pt-2">
+           <div className="bg-white rounded-xl border border-[#c6c6cd] overflow-hidden shadow-sm">
+             <table className="w-full text-left">
+               <thead className="bg-[#e6e8ea]">
+                 <tr>
+                   <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider">Día</th>
+                   <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider text-center">Inicio</th>
+                   <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider text-center">Fin</th>
+                   <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider text-center">Tareas Completadas</th>
+                   <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right">Logro</th>
+                 </tr>
+               </thead>
+               <tbody className="divide-y divide-[#c6c6cd] text-[11px] font-medium text-slate-600">
+                 {metric.dailyStats.map((d: any, i: number) => (
+                   <tr key={i}>
+                     <td className="px-4 py-3 text-slate-800">{d.dateStr}</td>
+                     <td className="px-4 py-3 text-center">{d.start}</td>
+                     <td className="px-4 py-3 text-center">{d.end}</td>
+                     <td className="px-4 py-3 text-center">{d.completed}</td>
+                     <td className={cn("px-4 py-3 text-right font-bold", d.efficacy >= 90 ? "text-emerald-600" : d.efficacy >= 70 ? "text-amber-600" : "text-rose-600")}>
+                       {d.efficacy}%
+                     </td>
+                   </tr>
+                 ))}
+               </tbody>
+             </table>
+           </div>
+         </div>
+      )}
+    </div>
+  )
+}
+
 function DailyReportScreen({ registros, operarios, tasks, supervisorName, onBack }: { registros: any[], operarios: any[], tasks: any[], supervisorName: string, onBack: () => void }) {
   const componentRef = React.useRef(null);
+  const [filterType, setFilterType] = React.useState<'diario' | 'semanal' | 'mensual' | 'custom'>('diario');
+  const [customStart, setCustomStart] = React.useState('');
+  const [customEnd, setCustomEnd] = React.useState('');
   
   const today = new Date();
   const todayStr = getArgentinaDate();
 
+  const getActivePeriodString = () => {
+    if (filterType === 'diario') return todayStr;
+    if (filterType === 'semanal') return 'Últimos 7 días';
+    if (filterType === 'mensual') return 'Este Mes';
+    if (filterType === 'custom' && customStart && customEnd) {
+      return `${formatArgDate(new Date(customStart + 'T00:00:00'))} al ${formatArgDate(new Date(customEnd + 'T23:59:59'))}`;
+    }
+    return 'Periodo Seleccionado';
+  };
+
   const perOpMetrics = React.useMemo(() => {
-    return operarios.map(op => {
+    let startDateObj: Date | null = null;
+    let endDateObj: Date | null = null;
+    let limitDays = 1;
+
+    if (filterType === 'diario') {
+      startDateObj = new Date();
+      startDateObj.setHours(0,0,0,0);
+      endDateObj = new Date();
+      endDateObj.setHours(23,59,59,999);
+      limitDays = 1;
+    } else if (filterType === 'semanal') {
+      startDateObj = new Date();
+      startDateObj.setDate(today.getDate() - 7);
+      startDateObj.setHours(0,0,0,0);
+      endDateObj = new Date();
+      endDateObj.setHours(23,59,59,999);
+      limitDays = 7;
+    } else if (filterType === 'mensual') {
+      startDateObj = new Date(today.getFullYear(), today.getMonth(), 1);
+      endDateObj = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+      limitDays = today.getDate(); // approximate passed days
+    } else if (filterType === 'custom' && customStart && customEnd) {
+      startDateObj = new Date(customStart + 'T00:00:00');
+      endDateObj = new Date(customEnd + 'T23:59:59');
+      const diffTime = Math.abs(endDateObj.getTime() - startDateObj.getTime());
+      limitDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      if (limitDays === 0) limitDays = 1;
+    }
+
+    return operarios.filter(o => o.rol !== 'supervisor').map(op => {
       const logs = registros
-        .filter(r => r.operario_nombre === op.nombre && formatArgDate(r.inicio) === todayStr)
+        .filter(r => {
+          if (r.operario_nombre !== op.nombre) return false;
+          if (!startDateObj || !endDateObj) return formatArgDate(r.inicio) === todayStr;
+          let recDate = new Date(r.inicio);
+          return recDate >= startDateObj && recDate <= endDateObj;
+        })
         .sort((a,b) => new Date(a.inicio).getTime() - new Date(b.inicio).getTime());
 
       if (logs.length === 0) return null;
@@ -3925,7 +4111,18 @@ function DailyReportScreen({ registros, operarios, tasks, supervisorName, onBack
       const totalMin = logs.reduce((acc, r) => acc + (r.duracion_minutos || 0), 0);
       const hours = (totalMin / 60).toFixed(1);
 
-      const assignedCount = tasks.filter(t => t.asignados && t.asignados.includes(op.nombre)).length;
+      const isMultiDay = filterType !== 'diario';
+      
+      const tareasAsignadasList = tasks.filter(t => t.frecuencia === 'Diaria' && t.asignados?.includes(op.nombre));
+      let assignedCount = tareasAsignadasList.length * limitDays;
+      const semanalTasks = tasks.filter(t => t.frecuencia === 'Semanal' && t.asignados?.includes(op.nombre)).length;
+      const mensualTasks = tasks.filter(t => t.frecuencia === 'Mensual' && t.asignados?.includes(op.nombre)).length;
+
+      if (limitDays >= 7) assignedCount += semanalTasks * Math.floor(limitDays / 7);
+      if (limitDays >= 30) assignedCount += mensualTasks * Math.floor(limitDays / 30);
+      
+      if (assignedCount === 0 && tasks.filter(t => t.asignados?.includes(op.nombre)).length > 0) assignedCount = 1;
+
       const completedCount = logs.filter(r => 
         r.fin && 
         r.accion && 
@@ -3934,19 +4131,50 @@ function DailyReportScreen({ registros, operarios, tasks, supervisorName, onBack
         !r.accion.startsWith('Sesión')
       ).length;
 
-      const efficacy = assignedCount > 0 ? Math.round((completedCount / assignedCount) * 100) : 100;
+      const efficacy = assignedCount > 0 ? Math.min(100, Math.round((completedCount / assignedCount) * 100)) : 100;
+
+      // Group day-by-day stats
+      const dailyMap: Record<string, any[]> = {};
+      logs.forEach(log => {
+        const dateStr = formatArgDate(log.inicio);
+        if(!dailyMap[dateStr]) dailyMap[dateStr] = [];
+        dailyMap[dateStr].push(log);
+      });
+
+      const dailyStats = Object.keys(dailyMap).sort().map(dateStr => {
+         const dayLogs = dailyMap[dateStr].sort((a,b) => new Date(a.inicio).getTime() - new Date(b.inicio).getTime());
+         const dFirst = dayLogs[0];
+         const dLast = [...dayLogs].reverse().find(l => l.fin) || dayLogs[dayLogs.length - 1];
+         
+         const dTasksCompleted = dayLogs.filter(r => 
+           r.fin && r.accion && !r.accion.includes('Turno') && !r.accion.includes('Descanso') && !r.accion.startsWith('Sesión')
+         ).length;
+         
+         const dAssigned = tareasAsignadasList.length > 0 ? tareasAsignadasList.length : 1;
+         const dEfficacy = Math.min(100, Math.round((dTasksCompleted / dAssigned) * 100));
+
+         return {
+           dateStr,
+           start: formatArgTime(dFirst.inicio),
+           end: dLast.fin ? formatArgTime(dLast.fin) : 'Activo',
+           completed: dTasksCompleted,
+           assigned: dAssigned,
+           efficacy: dEfficacy
+         };
+      });
 
       return {
         nombre: op.nombre,
-        inicio: startTime,
-        fin: endTime,
+        inicio: isMultiDay ? '-' : startTime,
+        fin: isMultiDay ? '-' : endTime,
         duracion: `${hours}h`,
         assigned: assignedCount,
         completed: completedCount,
-        efficacy: efficacy
+        efficacy: efficacy,
+        dailyStats: isMultiDay ? dailyStats : null
       };
     }).filter(Boolean);
-  }, [registros, operarios, tasks, todayStr]);
+  }, [registros, operarios, tasks, filterType, customStart, customEnd, todayStr]);
 
   return (
     <div className="min-h-screen bg-[#f7f9fb] text-[#191c1e] font-sans animate-in fade-in duration-500">
@@ -3961,9 +4189,9 @@ function DailyReportScreen({ registros, operarios, tasks, supervisorName, onBack
                 <div className="w-8 h-8 bg-black rounded-lg flex items-center justify-center text-white">
                   <Activity className="w-5 h-5" />
                 </div>
-                <h1 className="text-lg md:text-xl font-bold tracking-tight">Reporte de Productividad Diaria</h1>
+                <h1 className="text-lg md:text-xl font-bold tracking-tight">Reporte de Productividad</h1>
               </div>
-              <p className="text-xs font-bold text-blue-600 mt-1 pl-11">{formatArgDate(today)}</p>
+              <p className="text-xs font-bold text-blue-600 mt-1 pl-11">{getActivePeriodString()}</p>
             </div>
           </div>
           <button 
@@ -3975,96 +4203,126 @@ function DailyReportScreen({ registros, operarios, tasks, supervisorName, onBack
         </div>
       </header>
 
+      <div className="bg-slate-50 border-b border-[#c6c6cd] py-4 no-print">
+        <div className="max-w-[1280px] mx-auto px-4 flex flex-col md:flex-row gap-4 items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Calendar className="w-5 h-5 text-slate-400" />
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Filtro de Período</span>
+          </div>
+          
+          <div className="flex items-center gap-4 w-full md:w-auto">
+            <div className="flex bg-white border border-[#c6c6cd] p-1 rounded-full shadow-sm">
+              <button 
+                onClick={() => setFilterType('diario')}
+                className={cn("px-4 py-1.5 text-xs font-bold rounded-full transition-all", filterType === 'diario' ? "bg-black text-white" : "text-slate-500 hover:text-slate-700")}
+              >Diario</button>
+              <button 
+                onClick={() => setFilterType('semanal')}
+                className={cn("px-4 py-1.5 text-xs font-bold rounded-full transition-all", filterType === 'semanal' ? "bg-black text-white" : "text-slate-500 hover:text-slate-700")}
+              >Semanal</button>
+              <button 
+                onClick={() => setFilterType('mensual')}
+                className={cn("px-4 py-1.5 text-xs font-bold rounded-full transition-all", filterType === 'mensual' ? "bg-black text-white" : "text-slate-500 hover:text-slate-700")}
+              >Mensual</button>
+              <button 
+                onClick={() => setFilterType('custom')}
+                className={cn("px-4 py-1.5 text-xs font-bold rounded-full transition-all", filterType === 'custom' ? "bg-black text-white" : "text-slate-500 hover:text-slate-700")}
+              >Personalizado</button>
+            </div>
+            {filterType === 'custom' && (
+              <div className="flex items-center gap-2 bg-white border border-[#c6c6cd] rounded-full px-2 py-1 shadow-sm">
+                <input 
+                  type="date" 
+                  className="bg-transparent px-2 py-1 text-xs font-bold text-slate-700 outline-none w-[110px]"
+                  value={customStart}
+                  onChange={e => setCustomStart(e.target.value)}
+                />
+                <span className="text-slate-300 font-bold px-1">a</span>
+                <input 
+                  type="date" 
+                  className="bg-transparent px-2 py-1 text-xs font-bold text-slate-700 outline-none w-[110px]"
+                  value={customEnd}
+                  onChange={e => setCustomEnd(e.target.value)}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
       <div ref={componentRef} className="print:p-0 print:m-0">
         <main className="max-w-[1280px] mx-auto py-8 px-4">
           <section className="bg-white border border-[#c6c6cd] mb-8 shadow-sm overflow-hidden rounded-2xl">
-            <div className="px-6 py-4 border-b border-[#c6c6cd] bg-black text-white flex justify-between items-center">
-            <div className="flex flex-col gap-1">
-              <h2 className="text-sm font-bold flex items-center gap-2 uppercase tracking-widest">
-                <ClipboardList className="w-5 h-5" /> Desempeño por Operario
-              </h2>
+            <div className="px-6 py-4 border-b border-[#c6c6cd] bg-[#131b2e] text-white flex justify-between items-center">
+              <div className="flex flex-col gap-1">
+                <h2 className="text-sm font-bold flex items-center gap-2 uppercase tracking-widest text-[#dbe1ff]">
+                  <ClipboardList className="w-5 h-5" /> Desempeño por Operario
+                </h2>
+              </div>
+              <span className="text-[10px] font-bold uppercase tracking-[0.2em] opacity-60">Actualizado hace un momento</span>
             </div>
-            <span className="text-[10px] font-bold uppercase tracking-[0.2em] opacity-60">Actualizado hace un momento</span>
-          </div>
-          
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-[#f2f4f6] text-[#45464d]">
-                  <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-wider border-b border-[#c6c6cd]">OP.</th>
-                  <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-wider border-b border-[#c6c6cd] text-center">INI.</th>
-                  <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-wider border-b border-[#c6c6cd] text-center">FIN</th>
-                  <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-wider border-b border-[#c6c6cd] text-center">DUR.</th>
-                  <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-wider border-b border-[#c6c6cd] text-center">ASIG.</th>
-                  <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-wider border-b border-[#c6c6cd] text-center">REAL.</th>
-                  <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-wider border-b border-[#c6c6cd] text-center">% CUMP.</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#c6c6cd]">
-                {perOpMetrics.map((m: any, idx) => (
-                  <tr key={idx} className={cn("hover:bg-[#f2f4f6] transition-colors", idx % 2 !== 0 && "bg-[#f2f4f6]/30")}>
-                    <td className="px-4 py-5 text-sm font-bold text-slate-800">{m.nombre}</td>
-                    <td className="px-4 py-5 text-center text-xs font-mono text-slate-500">{m.inicio}</td>
-                    <td className="px-4 py-5 text-center text-xs font-mono text-slate-500">{m.fin}</td>
-                    <td className="px-4 py-5 text-center text-xs font-mono font-bold text-slate-700">{m.duracion}</td>
-                    <td className="px-4 py-5 text-center text-xs font-mono text-slate-500">{m.assigned}</td>
-                    <td className="px-4 py-5 text-center text-xs font-mono text-slate-500">{m.completed}</td>
-                    <td className="px-4 py-5">
-                      <div className="flex flex-col items-center gap-1">
-                        <span className={cn(
-                          "text-[11px] font-black",
-                          m.efficacy >= 90 ? "text-emerald-600" : m.efficacy >= 70 ? "text-amber-600" : "text-rose-600"
-                        )}>{m.efficacy}%</span>
-                        <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                          <div 
-                            className={cn(
-                              "h-full rounded-full transition-all duration-1000",
-                              m.efficacy >= 90 ? "bg-emerald-500" : m.efficacy >= 70 ? "bg-amber-500" : "bg-rose-500"
-                            )}
-                            style={{ width: `${m.efficacy}%` }}
-                          ></div>
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section className="mt-16 mb-12 p-12 bg-white border border-[#c6c6cd] rounded-3xl flex flex-col gap-4 shadow-sm items-center max-w-md mx-auto text-center border-dashed">
-          <div className="w-full max-w-[240px]">
-            <div className="w-full border-b-2 border-black mb-6 min-h-[60px] flex items-end justify-center pb-2">
-               <span className="font-serif italic text-2xl text-slate-300 pointer-events-none">Firma Digital</span>
+            
+            <div className="overflow-x-auto print:overflow-visible">
+              <div className="min-w-[800px]">
+                <div className="bg-[#f2f4f6] border-b border-[#c6c6cd] px-4 py-3 hidden sm:block">
+                  <div className="grid grid-cols-7 items-center text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                    <div className="px-1">OP.</div>
+                    <div className="px-1 text-center">INI.</div>
+                    <div className="px-1 text-center">FIN</div>
+                    <div className="px-1 text-center">DUR.</div>
+                    <div className="px-1 text-center">ASIG.</div>
+                    <div className="px-1 text-center">REAL.</div>
+                    <div className="px-1 text-center">% CUMP.</div>
+                  </div>
+                </div>
+                <div className="divide-y divide-[#c6c6cd]">
+                  {perOpMetrics.map((m: any, idx) => (
+                    <OperarioAccordion key={idx} metric={m} />
+                  ))}
+                  {perOpMetrics.length === 0 && (
+                    <div className="p-8 text-center text-slate-500 font-medium text-sm">
+                      No hay registros para este periodo.
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">Responsable de Turno</p>
-            <p className="text-sm font-bold text-slate-800 uppercase tracking-tight">{supervisorName}</p>
-            <p className="text-[10px] font-medium text-slate-400 italic mt-1">Verificado en Sistema</p>
-          </div>
-        </section>
-      </main>
+          </section>
 
-      <footer className="bg-[#f7f9fb] border-t border-[#c6c6cd] mt-auto">
-        <div className="flex justify-between items-center w-full py-8 max-w-[1280px] mx-auto px-4 flex-col text-center gap-4">
-          <div className="text-[10px] font-bold text-[#45464d] uppercase tracking-[0.2em]">
-            Generado: {formatArgDateTime(new Date())} | Reporte Oficial
+          <section className="mt-16 mb-12 p-12 bg-white border border-[#c6c6cd] flex flex-col gap-4 shadow-sm items-center max-w-md mx-auto text-center border-dashed">
+            <div className="w-full max-w-[240px]">
+              <div className="w-full border-b-2 border-black mb-6 min-h-[60px] flex items-end justify-center pb-2">
+                 <span className="font-serif italic text-2xl text-slate-300 pointer-events-none">Firma Digital</span>
+              </div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">Responsable de Turno</p>
+              <p className="text-sm font-bold text-slate-800 uppercase tracking-tight">{supervisorName}</p>
+              <p className="text-[10px] font-medium text-slate-400 italic mt-1">Verificado en Sistema</p>
+            </div>
+          </section>
+        </main>
+
+        <footer className="bg-[#f7f9fb] border-t border-[#c6c6cd] mt-auto">
+          <div className="flex justify-between items-center w-full py-8 max-w-[1280px] mx-auto px-4 flex-col text-center gap-4">
+            <div className="text-[10px] font-bold text-[#45464d] uppercase tracking-[0.2em]">
+              Generado: {formatArgDateTime(new Date())} | Reporte Oficial
+            </div>
+            <div className="text-[11px] font-medium text-slate-400 leading-relaxed">
+              © 2026 Arevalo Servicios Sociales.<br />Desarrollo WM.
+            </div>
           </div>
-          <div className="text-[11px] font-medium text-slate-400 leading-relaxed">
-            © 2026 Arevalo Servicios Sociales.<br />Desarrollo WM.
-          </div>
-        </div>
-      </footer>
+        </footer>
       </div>
 
       <style dangerouslySetInnerHTML={{ __html: `
         @media print {
           .no-print { display: none !important; }
           body { background-color: white !important; }
-          main { padding: 0 !important; }
-          .rounded-2xl, .rounded-3xl { border-radius: 0 !important; }
+          main { padding: 0 !important; max-width: 100% !important; }
+          .rounded-2xl, .rounded-3xl, .rounded-xl { border-radius: 0 !important; }
           .shadow-sm { box-shadow: none !important; }
-          .border { border-color: #eee !important; }
+          .border { border-color: #000 !important; }
+          .bg-\\[\\#131b2e\\] { background-color: #e5e5e5 !important; color: #000 !important; }
+          .text-\\[\\#dbe1ff\\] { color: #000 !important; }
         }
       `}} />
     </div>
@@ -4072,16 +4330,57 @@ function DailyReportScreen({ registros, operarios, tasks, supervisorName, onBack
 }
 
 function DailySupervisorReport({ registros, operarios, tasks }: { registros: any[], operarios: any[], tasks: any[] }) {
+  const [filterType, setFilterType] = React.useState<'diario' | 'semanal' | 'mensual' | 'custom'>('diario');
+  const [customStart, setCustomStart] = React.useState('');
+  const [customEnd, setCustomEnd] = React.useState('');
+
   const todayStr = React.useMemo(() => getArgentinaDate(), []);
   
   const reportData = React.useMemo(() => {
+    const today = new Date();
+    let startDateObj: Date | null = null;
+    let endDateObj: Date | null = null;
+    let days = 1;
+
+    if (filterType === 'diario') {
+      startDateObj = new Date();
+      startDateObj.setHours(0,0,0,0);
+      endDateObj = new Date();
+      endDateObj.setHours(23,59,59,999);
+      days = 1;
+    } else if (filterType === 'semanal') {
+      startDateObj = new Date();
+      startDateObj.setDate(today.getDate() - 7);
+      startDateObj.setHours(0,0,0,0);
+      endDateObj = new Date();
+      endDateObj.setHours(23,59,59,999);
+      days = 7;
+    } else if (filterType === 'mensual') {
+      startDateObj = new Date(today.getFullYear(), today.getMonth(), 1);
+      endDateObj = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+      days = today.getDate(); // days passed in the month
+    } else if (filterType === 'custom' && customStart && customEnd) {
+      startDateObj = new Date(customStart + 'T00:00:00');
+      endDateObj = new Date(customEnd + 'T23:59:59');
+      const diffTime = Math.abs(endDateObj.getTime() - startDateObj.getTime());
+      days = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      if (days === 0) days = 1;
+    }
+
     return operarios.filter(o => o.rol !== 'supervisor').map(op => {
-      const opsRecords = registros.filter(r => r.operario_nombre === op.nombre && formatArgDate(r.inicio) === todayStr);
+      const opsRecords = registros.filter(r => {
+        if (r.operario_nombre !== op.nombre) return false;
+        if (!startDateObj || !endDateObj) {
+           return formatArgDate(r.inicio) === todayStr; 
+        }
+        let recDate = new Date(r.inicio);
+        return recDate >= startDateObj && recDate <= endDateObj;
+      });
       
       let horaIngreso = '-';
       let horaSalida = '-';
       
-      if (opsRecords.length > 0) {
+      if (filterType === 'diario' && opsRecords.length > 0) {
         const sortedDesc = [...opsRecords].sort((a,b) => new Date(a.inicio).getTime() - new Date(b.inicio).getTime());
         horaIngreso = formatArgTime(sortedDesc[0].inicio);
         
@@ -4096,8 +4395,19 @@ function DailySupervisorReport({ registros, operarios, tasks }: { registros: any
       const tiempoActivoMin = opsRecords.filter(r => !r.accion?.includes('Descanso')).reduce((acc, r) => acc + (r.duracion_minutos || 0), 0);
       const tiempoActivoStr = `${Math.floor(tiempoActivoMin/60)}h ${Math.round(tiempoActivoMin%60)}m`;
 
+      const limitDays = days || 1;
       const tareasAsignadasList = tasks.filter(t => t.frecuencia === 'Diaria' && t.asignados?.includes(op.nombre));
-      const tareasAsignadas = tareasAsignadasList.length;
+      
+      // Calculate overall tasks assigned in the period (for recurring ones)
+      // Note: This is an approximation. Daily tasks happen every day.
+      let tareasAsignadas = tareasAsignadasList.length * limitDays;
+      
+      // Weekly and monthly tasks
+      const semanalTasks = tasks.filter(t => t.frecuencia === 'Semanal' && t.asignados?.includes(op.nombre)).length;
+      const mensualTasks = tasks.filter(t => t.frecuencia === 'Mensual' && t.asignados?.includes(op.nombre)).length;
+
+      if (limitDays >= 7) tareasAsignadas += semanalTasks * Math.floor(limitDays / 7);
+      if (limitDays >= 30) tareasAsignadas += mensualTasks * Math.floor(limitDays / 30);
 
       const tareasRealizadasList = opsRecords.filter(r => r.accion?.startsWith('Tarea: '));
       const tareasRealizadas = tareasRealizadasList.length;
@@ -4115,21 +4425,62 @@ function DailySupervisorReport({ registros, operarios, tasks }: { registros: any
         eficiencia
       }
     }).sort((a, b) => b.eficiencia - a.eficiencia);
-  }, [registros, operarios, tasks, todayStr]);
+  }, [registros, operarios, tasks, filterType, customStart, customEnd, todayStr]);
 
   return (
     <div className="flex flex-col gap-6 w-full">
-      <div className="bg-white p-6 rounded-[24px] shadow-sm border border-slate-200 flex-1 overflow-x-auto">
+      <div className="flex flex-col md:flex-row gap-4 items-end bg-white p-4 rounded-3xl shadow-sm border border-slate-200">
+        <div className="flex-1">
+          <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 block ml-1">Periodo del Reporte</label>
+          <div className="flex bg-slate-100 p-1 rounded-2xl w-full max-w-md">
+            <button 
+              onClick={() => setFilterType('diario')}
+              className={cn("flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all", filterType === 'diario' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}
+            >Diario</button>
+            <button 
+              onClick={() => setFilterType('semanal')}
+              className={cn("flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all", filterType === 'semanal' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}
+            >Semanal</button>
+            <button 
+              onClick={() => setFilterType('mensual')}
+              className={cn("flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all", filterType === 'mensual' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}
+            >Mensual</button>
+            <button 
+              onClick={() => setFilterType('custom')}
+              className={cn("flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all", filterType === 'custom' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}
+            >Personalizado</button>
+          </div>
+        </div>
+        {filterType === 'custom' && (
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <input 
+              type="date" 
+              className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none focus:border-blue-400"
+              value={customStart}
+              onChange={e => setCustomStart(e.target.value)}
+            />
+            <span className="text-slate-400 font-bold">a</span>
+            <input 
+              type="date" 
+              className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none focus:border-blue-400"
+              value={customEnd}
+              onChange={e => setCustomEnd(e.target.value)}
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-200 flex-1 overflow-x-auto">
          <h3 className="font-bold text-lg text-slate-800 mb-6 flex items-center gap-2">
-           <UserCircle className="w-5 h-5 text-blue-500" /> Reporte Diario - {todayStr}
+           <UserCircle className="w-5 h-5 text-blue-500" /> Reporte de Productividad
          </h3>
          
          <table className="w-full text-left text-sm whitespace-nowrap">
            <thead className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
              <tr>
                <th className="px-5 py-4 rounded-l-xl">Operario</th>
-               <th className="px-5 py-4 text-center">Ingreso</th>
-               <th className="px-5 py-4 text-center">Salida</th>
+               {filterType === 'diario' && <th className="px-5 py-4 text-center">Ingreso</th>}
+               {filterType === 'diario' && <th className="px-5 py-4 text-center">Salida</th>}
                <th className="px-5 py-4 text-center">Tiempo Act.</th>
                <th className="px-5 py-4 text-center">Asignadas</th>
                <th className="px-5 py-4 text-center">Realizadas</th>
@@ -4143,8 +4494,8 @@ function DailySupervisorReport({ registros, operarios, tasks }: { registros: any
                     <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 text-xs">{row.nombre.charAt(0)}</div>
                     {row.nombre}
                  </td>
-                 <td className="px-5 py-4 text-slate-500 font-medium text-center">{row.horaIngreso}</td>
-                 <td className="px-5 py-4 text-slate-500 font-medium text-center">{row.horaSalida}</td>
+                 {filterType === 'diario' && <td className="px-5 py-4 text-slate-500 font-medium text-center">{row.horaIngreso}</td>}
+                 {filterType === 'diario' && <td className="px-5 py-4 text-slate-500 font-medium text-center">{row.horaSalida}</td>}
                  <td className="px-5 py-4 text-slate-700 font-bold text-center">{row.tiempoActivoStr}</td>
                  <td className="px-5 py-4 text-center font-bold text-blue-600">{row.tareasAsignadas}</td>
                  <td className="px-5 py-4 text-center font-bold text-emerald-600">{row.tareasRealizadas}</td>
@@ -4160,9 +4511,9 @@ function DailySupervisorReport({ registros, operarios, tasks }: { registros: any
          {reportData.length === 0 && <p className="text-center text-slate-400 py-6 text-sm font-medium">No hay operarios para mostrar.</p>}
       </div>
 
-      <div className="bg-white p-6 rounded-[24px] shadow-sm border border-slate-200 w-full flex flex-col">
+      <div className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-200 w-full flex flex-col">
          <h3 className="font-bold text-lg text-slate-800 mb-6 flex items-center gap-2">
-           <CheckCircle2 className="w-5 h-5 text-emerald-500" /> Tareas Hoy
+           <CheckCircle2 className="w-5 h-5 text-emerald-500" /> Tareas ({filterType})
          </h3>
          <div className="flex-1 min-h-[250px]">
            <ResponsiveContainer width="100%" height="100%" minHeight={1} minWidth={1}>
