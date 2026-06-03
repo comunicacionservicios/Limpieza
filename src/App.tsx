@@ -2,10 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { jsPDF } from "jspdf";
 import "jspdf-autotable";
-import { Clock, Play, Square, PauseCircle, LogOut, CheckCircle2, PlusCircle, UserCircle, Users, RefreshCcw, Plus, Calendar, FileText, ClipboardList, ShieldAlert, Bell, Menu, X, Activity, WifiOff, Coffee, Monitor, LayoutGrid, MoveRight, MapPin, AlertTriangle, Package, ShieldCheck, ChevronRight, ChevronDown, Camera, Key, Home, BarChart2, Megaphone, History, Trash2, Edit3, Settings, Shield, Download } from 'lucide-react';
+import { Clock, Play, Square, PauseCircle, LogOut, CheckCircle2, PlusCircle, UserCircle, Users, RefreshCcw, Plus, Calendar, FileText, ClipboardList, ShieldAlert, Bell, Menu, X, Activity, WifiOff, Coffee, Monitor, LayoutGrid, MoveRight, MapPin, AlertTriangle, Package, ShieldCheck, ChevronRight, ChevronDown, ExternalLink, Camera, Key, Home, BarChart2, Megaphone, History, Trash2, Edit3, Settings, Shield, Download } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { initGoogleAuth, googleSignIn, googleSignOut, createGoogleCalendarEvent } from './lib/googleCalendar';
+import type { User as FirebaseUser } from 'firebase/auth';
 
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
@@ -1617,6 +1619,49 @@ export default function App() {
   const [showPWAHelp, setShowPWAHelp] = useState(false);
   const [loginDate, setLoginDate] = useStickyState<string | null>(null, 'limpieza_login_date');
 
+  // Google Calendar Integration States
+  const [googleUser, setGoogleUser] = useState<FirebaseUser | null>(null);
+  const [googleToken, setGoogleToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = initGoogleAuth(
+      (fUser, token) => {
+        setGoogleUser(fUser);
+        setGoogleToken(token);
+      },
+      () => {
+        setGoogleUser(null);
+        setGoogleToken(null);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
+
+  const handleLinkGoogleCalendar = async () => {
+    try {
+      const res = await googleSignIn();
+      if (res) {
+        setGoogleUser(res.user);
+        setGoogleToken(res.accessToken);
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert(`Error al conectar con Google Calendar: ${err.message || err}`);
+    }
+  };
+
+  const handleUnlinkGoogleCalendar = async () => {
+    if (!confirm('¿Estás seguro de que deseas desconectar tu cuenta de Google Calendar?')) return;
+    try {
+      await googleSignOut();
+      setGoogleUser(null);
+      setGoogleToken(null);
+    } catch (err: any) {
+      console.error(err);
+      alert('Error al desconectar la cuenta.');
+    }
+  };
+
   useEffect(() => {
     // Basic auth mapping is no longer needed with Supabase and custom PIN login
     setAuthLoading(false);
@@ -1646,6 +1691,7 @@ export default function App() {
 
   // Menu & Dashboard States
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'tareas' | 'horarios' | 'insumos' | 'incidencias' | 'capacitacion' | 'rrhh' | 'perfil' | 'historial'>('tareas');
   const [location, setLocation] = useState<string>('');
   const [notificationsCount, setNotificationsCount] = useState(0);
@@ -1749,14 +1795,32 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
-    // Check if the day has changed (Argentina Time)
-    const interval = setInterval(() => {
-      const today = getArgentinaDate();
-      if (user && loginDate && loginDate !== today) {
-        performGlobalLogout();
-        alert("La sesión ha expirado porque es un nuevo día (Horario Argentina). Inicie sesión nuevamente.");
+    const checkExpiration = () => {
+      if (!user) return;
+      try {
+        const dFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires', year: 'numeric', month: '2-digit', day: '2-digit' });
+        const today = dFmt.format(new Date()); // Formato: YYYY-MM-DD
+        
+        const timeFmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Argentina/Buenos_Aires', hour: 'numeric', minute: 'numeric', hour12: false });
+        const timeStr = timeFmt.format(new Date());
+        const [hourStr, minStr] = timeStr.split(':');
+        const argHour = parseInt(hourStr, 10);
+        const argMin = parseInt(minStr, 10);
+
+        const isDifferentDay = loginDate && loginDate !== today;
+        const is2359 = argHour === 23 && argMin === 59;
+
+        if (isDifferentDay || is2359) {
+          performGlobalLogout();
+          alert("Su sesión ha finalizado automáticamente debido al cierre de jornada forzado diario (23:59 Horario Argentina).");
+        }
+      } catch (err) {
+        console.error("Error al validar expiración de sesión:", err);
       }
-    }, 60000); // check every minute
+    };
+
+    checkExpiration();
+    const interval = setInterval(checkExpiration, 15000); // comprobar cada 15 segundos
     return () => clearInterval(interval);
   }, [user, loginDate]);
 
@@ -1787,7 +1851,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    performGlobalLogout();
+    setShowLogoutModal(true);
   };
 
   const [reauthError, setReauthError] = useState<string | null>(null);
@@ -1827,7 +1891,49 @@ export default function App() {
           targetCoords={targetCoords}
           setTargetCoords={setTargetCoords}
           currentCoords={currentCoords}
+          googleUser={googleUser}
+          googleToken={googleToken}
+          onLinkGoogle={handleLinkGoogleCalendar}
+          onUnlinkGoogle={handleUnlinkGoogleCalendar}
         />
+
+        <AnimatePresence>
+          {showLogoutModal && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[400] flex items-center justify-center p-4">
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }} 
+                animate={{ scale: 1, opacity: 1 }} 
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-white w-full max-w-sm rounded-[32px] p-6 shadow-2xl text-center relative border border-slate-100"
+              >
+                <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <LogOut className="w-8 h-8" />
+                </div>
+                <h3 className="text-xl font-black text-[#0b3464] mb-2 tracking-tight">¿Cerrar Sesión?</h3>
+                <p className="text-xs font-bold text-slate-500 mb-6 leading-relaxed px-2">
+                  ¿Estás seguro de que deseas cerrar sesión? Deberás ingresar tu PIN la próxima vez para acceder.
+                </p>
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setShowLogoutModal(false)}
+                    className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl font-bold text-xs uppercase"
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    onClick={async () => {
+                      setShowLogoutModal(false);
+                      await performGlobalLogout();
+                    }}
+                    className="flex-1 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl font-black text-xs uppercase shadow-lg shadow-rose-200"
+                  >
+                    Salir
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </>
     );
   }
@@ -2019,7 +2125,49 @@ export default function App() {
           notificationsCount={notificationsCount}
           targetCoords={targetCoords}
           currentCoords={currentCoords}
+          googleUser={googleUser}
+          googleToken={googleToken}
+          handleLinkGoogleCalendar={handleLinkGoogleCalendar}
+          handleUnlinkGoogleCalendar={handleUnlinkGoogleCalendar}
         />
+
+        <AnimatePresence>
+          {showLogoutModal && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[400] flex items-center justify-center p-4">
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }} 
+                animate={{ scale: 1, opacity: 1 }} 
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-white w-full max-w-sm rounded-[32px] p-6 shadow-2xl text-center relative border border-slate-100"
+              >
+                <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <LogOut className="w-8 h-8" />
+                </div>
+                <h3 className="text-xl font-black text-[#0b3464] mb-2 tracking-tight">¿Cerrar Sesión?</h3>
+                <p className="text-xs font-bold text-slate-500 mb-6 leading-relaxed px-2">
+                  ¿Estás seguro de que deseas cerrar sesión? Deberás ingresar tu PIN la próxima vez para acceder.
+                </p>
+                <div className="flex gap-3 font-sans">
+                  <button 
+                    onClick={() => setShowLogoutModal(false)}
+                    className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl font-bold text-xs uppercase"
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    onClick={async () => {
+                      setShowLogoutModal(false);
+                      await performGlobalLogout();
+                    }}
+                    className="flex-1 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl font-black text-xs uppercase shadow-lg shadow-rose-200"
+                  >
+                    Salir
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
@@ -2042,7 +2190,11 @@ function Dashboard({
   showNotifications, setShowNotifications,
   notificationsCount,
   targetCoords,
-  currentCoords
+  currentCoords,
+  googleUser,
+  googleToken,
+  handleLinkGoogleCalendar,
+  handleUnlinkGoogleCalendar
 }: any) {
   
   const time = useCurrentTime();
@@ -2257,6 +2409,22 @@ function Dashboard({
     }
   };
 
+  const isTimerOnlyView = typeof window !== 'undefined' && window.location.search.includes('task_timer=true');
+
+  if (isTimerOnlyView) {
+    return (
+      <TimerOnlyScreen 
+        activeTask={activeTask}
+        taskStart={taskStart}
+        taskComment={taskComment}
+        setTaskComment={setTaskComment}
+        taskDurationText={taskDurationText}
+        onFinish={handleFinishTask}
+        user={user}
+      />
+    );
+  }
+
   const [pendingReminder, setPendingReminder] = useState<{ id: string, title: string } | null>(null);
 
   // -- Reminder Checker --
@@ -2424,66 +2592,71 @@ function Dashboard({
         {/* TAB CONTENT (Controlled by Sidebar Menu) */}
         {activeTab === 'tareas' && (
           <section className="flex-1 flex flex-col pb-6">
-             <div className="flex items-center justify-between mb-4">
-               <h2 className="text-sm font-bold uppercase tracking-widest text-slate-500">{activeTask ? "Operación en sitio" : "Tareas disponibles"}</h2>
-             </div>
-             
-             {activeTask ? (
-               <motion.div 
-                 initial={{ opacity: 0, scale: 0.95 }}
-                 animate={{ opacity: 1, scale: 1 }}
-                 className="p-5 border-2 border-slate-100 rounded-3xl bg-slate-50 mb-6 w-full"
-               >
-                 <div className="flex justify-between items-start mb-6">
-                   <div className="pr-2">
-                     <h3 className="text-lg font-bold text-slate-800 leading-tight">{activeTask.titulo}</h3>
-                     <div className="flex gap-2 mt-2">
-                        <span className="px-2 py-0.5 bg-slate-200/50 rounded text-[10px] font-bold text-slate-600 uppercase inline-block">
-                          {activeTask.frecuencia}
-                        </span>
-                        {activeTask.tipoLimpieza && (
-                          <span className={cn(
-                            "px-2 py-0.5 rounded text-[10px] font-black uppercase inline-block",
-                            activeTask.tipoLimpieza === 'Mantenimiento' ? "bg-blue-100 text-blue-600" :
-                            activeTask.tipoLimpieza === 'Intermedia' ? "bg-amber-100 text-amber-600" : "bg-rose-100 text-rose-600"
-                          )}>
-                            {activeTask.tipoLimpieza}
-                          </span>
-                        )}
-                     </div>
-                   </div>
-                   <div className="text-right">
-                     <div className="text-2xl font-mono font-bold text-emerald-600">{taskDurationText}</div>
-                     <div className="text-[10px] text-slate-400 font-bold tracking-wider">HH:MM:SS</div>
-                   </div>
+             {activeTask && (
+               <div className="p-6 bg-slate-50 border border-slate-200 rounded-[24px] text-center shadow-inner mb-6 relative overflow-hidden">
+                 <div className="absolute top-0 right-0 p-3 bg-emerald-50 text-emerald-600 rounded-bl-2xl">
+                   <Clock className="w-5 h-5 animate-pulse" />
                  </div>
-
-                  <div className="mb-6 relative">
-                   <textarea
-                     value={taskComment}
-                     onChange={e => setTaskComment(e.target.value)}
-                     className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 outline-none resize-none h-24"
-                     placeholder="Agregar comentario u observación (opcional)..."
-                   />
-                 </div>
+                 <h3 className="text-base font-extrabold text-[#0b3464] tracking-tight">Tarea Activa en Ejecución</h3>
+                 <p className="text-xs text-slate-500 font-bold mt-1">
+                   "{activeTask.titulo}"
+                 </p>
+                 <div className="text-2xl font-mono font-black text-emerald-600 mt-3">{taskDurationText}</div>
+                 <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-1">Abierto en Pestaña de Cronómetro</p>
                  
-                 <button 
-                   onClick={handleFinishTask}
-                   className="btn-primary w-full"
-                 >
-                   <CheckCircle2 className="w-5 h-5" />
-                   Terminar Tarea
-                 </button>
-               </motion.div>
+                 <div className="flex flex-col sm:flex-row gap-2 mt-5 max-w-sm mx-auto">
+                   <button 
+                     onClick={() => {
+                       try {
+                         window.open(window.location.origin + window.location.pathname + "?task_timer=true", "_blank");
+                       } catch (e) {
+                         window.location.href = window.location.origin + window.location.pathname + "?task_timer=true";
+                       }
+                     }}
+                     className="flex-1 py-3 bg-white hover:bg-slate-50 text-slate-800 text-xs font-black uppercase tracking-widest rounded-xl transition-all shadow-sm border border-slate-200 flex items-center justify-center gap-2"
+                   >
+                     <Clock className="w-4 h-4 text-emerald-500 animate-pulse" /> Ver Cronómetro
+                   </button>
+                   <button 
+                     onClick={handleFinishTask}
+                     className="flex-1 py-3 bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-black uppercase tracking-widest rounded-xl transition-all border border-rose-100"
+                   >
+                     Terminar Tarea
+                   </button>
+                 </div>
+               </div>
+             )}
+             
+             {!activeTask ? (
+               <TaskSelector 
+                 onStart={handleStartTask} 
+                 shiftActive={shiftState === 'active'} 
+                 user={user} 
+                 googleUser={googleUser}
+                 googleToken={googleToken}
+                 onLinkGoogle={handleLinkGoogleCalendar}
+                 onUnlinkGoogle={handleUnlinkGoogleCalendar}
+               />
              ) : (
-               <TaskSelector onStart={handleStartTask} shiftActive={shiftState === 'active'} user={user} />
+               <div className="p-4 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200 text-center text-slate-400">
+                 <p className="text-xs font-medium">Debes finalizar la tarea activa en la pestaña del cronómetro para poder registrar una nueva.</p>
+               </div>
              )}
           </section>
         )}
 
         {activeTab === 'historial' && <OperarioTaskHistory user={user} />}
 
-        {activeTab === 'perfil' && <UserProfile user={user} onUpdate={onUserUpdate} />}
+        {activeTab === 'perfil' && (
+          <UserProfile 
+            user={user} 
+            onUpdate={onUserUpdate} 
+            googleUser={googleUser}
+            googleToken={googleToken}
+            onLink={handleLinkGoogleCalendar}
+            onUnlink={handleUnlinkGoogleCalendar}
+          />
+        )}
         
             {activeTab === 'incidencias' && (
               <div className="flex flex-col gap-6">
@@ -2653,7 +2826,55 @@ function ShiftButton({ color, label, icon, onClick, small, disabled }: { color: 
 }
 
 // -- Task Selector --
-function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) => void, shiftActive: boolean, user: Operario }) {
+function TaskSelector({ 
+  onStart, 
+  shiftActive, 
+  user,
+  googleUser,
+  googleToken,
+  onLinkGoogle,
+  onUnlinkGoogle
+}: { 
+  onStart: (t: TareaPlan) => void, 
+  shiftActive: boolean, 
+  user: Operario,
+  googleUser?: FirebaseUser | null,
+  googleToken?: string | null,
+  onLinkGoogle?: () => void,
+  onUnlinkGoogle?: () => void
+}) {
+  const [gcalSyncing, setGcalSyncing] = useState<Record<string, boolean>>({});
+  const [gcalSynced, setGcalSynced] = useStickyState<Record<string, boolean>>({}, 'limpieza_gcal_synced_tasks');
+
+  const handleSyncToGoogleCalendar = async (task: TareaPlan) => {
+    if (!googleToken) {
+      if (onLinkGoogle) {
+        if (confirm('Google Calendar no está vinculado. ¿Deseas vincular tu cuenta ahora para sincronizar esta tarea?')) {
+          onLinkGoogle();
+        }
+      } else {
+        alert('Debe vincular su cuenta de Google Calendar desde la pestaña de Perfil.');
+      }
+      return;
+    }
+
+    setGcalSyncing(prev => ({ ...prev, [task.id]: true }));
+    try {
+      const success = await createGoogleCalendarEvent(googleToken, task);
+      if (success) {
+        setGcalSynced((prev: any) => ({ ...prev, [task.id]: true }));
+        alert(`¡Tarea "${task.titulo}" sincronizada con éxito en tu Google Calendar!`);
+      } else {
+        alert('Error al sincronizar con Google Calendar. Por favor reintente o vuelva a vincular su cuenta.');
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert(`Error al sincronizar: ${err.message || err}`);
+    } finally {
+      setGcalSyncing(prev => ({ ...prev, [task.id]: false }));
+    }
+  };
+
   const [tasks, setTasks] = useState<TareaPlan[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -2670,6 +2891,7 @@ function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) 
   const [newTaskDate, setNewTaskDate] = useState('');
   const [newTaskFreq, setNewTaskFreq] = useState<'Diaria' | 'Semanal' | 'Mensual' | 'Eventual'>('Diaria');
   const [newTaskType, setNewTaskType] = useState<'Mantenimiento' | 'Intermedia' | 'Detalles'>('Mantenimiento');
+  const [taskNotice, setTaskNotice] = useState<string | null>(null);
 
   const [reminders, setReminders] = useStickyState<Record<string, { time: string, title: string }>>({}, 'limpieza_task_reminders');
   const [showReminderModal, setShowReminderModal] = useState<string | null>(null);
@@ -2781,13 +3003,40 @@ function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) 
     try {
       const { data: docRef, error } = await supabase.from('tasks').insert(newTask).select().single();
       if (error) throw error;
-      setTasks([{ id: docRef.id, ...newTask } as any, ...tasks]);
+      const createdTaskObj = { id: docRef.id, ...newTask } as TareaPlan;
+      setTasks([createdTaskObj, ...tasks]);
       setIsCreating(false);
+      setTaskNotice(newTaskTitle.trim());
       setNewTaskTitle('');
       setNewTaskDesc('');
       setNewTaskDate('');
+
+      // Auto Google Sync if linked
+      if (googleToken) {
+        try {
+          const success = await createGoogleCalendarEvent(googleToken, createdTaskObj);
+          if (success) {
+            setGcalSynced((prev: any) => ({ ...prev, [docRef.id]: true }));
+            alert(`¡Tarea "${createdTaskObj.titulo}" sincronizada con éxito en tu Google Calendar automáticamente!`);
+          }
+        } catch (gErr) {
+          console.error('Auto sync to Google Calendar failed:', gErr);
+        }
+      }
     } catch (error) {
       console.error('Error al crear la tarea:', error);
+    }
+  };
+
+  const handleDeleteTask = async (taskId: string | number, title: string) => {
+    if (!confirm(`¿Estás seguro de que deseas eliminar la tarea "${title}"?`)) return;
+    try {
+      const { error } = await supabase.from('tasks').delete().eq('id', taskId);
+      if (error) throw error;
+      setTasks(prev => prev.filter(t => t.id !== taskId));
+    } catch (err) {
+      console.error('Error in handleDeleteTask from TaskSelector:', err);
+      alert('Error al eliminar la tarea');
     }
   };
 
@@ -2845,22 +3094,34 @@ function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) 
         ))}
       </div>
 
-      {/* Enhanced Search Filter */}
-      <div className="relative mb-4">
-        <input 
-          type="text"
-          placeholder="Buscar tareas..."
-          value={searchTerm}
-          onChange={e => setSearchTerm(e.target.value)}
-          className="w-full bg-white border border-slate-200 rounded-2xl px-10 py-3 text-sm font-medium outline-none focus:border-blue-500 transition-all shadow-sm"
-        />
-        <ClipboardList className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-        {searchTerm && (
-          <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-            <X className="w-4 h-4" />
-          </button>
-        )}
-      </div>
+
+
+      {/* Google Calendar Connection Status Banner */}
+      {onLinkGoogle && onUnlinkGoogle && (
+        <div className="mb-4 bg-white border border-slate-100 rounded-2xl p-3 shadow-sm flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 font-bold text-slate-700 min-w-0">
+            <Calendar className={cn("w-4 h-4", googleUser ? "text-emerald-500" : "text-slate-400")} />
+            <span className="truncate">
+              {googleUser ? `Sincronizado: ${googleUser.email}` : "Sincronizar con Google Calendar"}
+            </span>
+          </div>
+          {googleUser ? (
+            <button 
+              onClick={onUnlinkGoogle}
+              className="text-[10px] font-black text-rose-500 uppercase bg-rose-50/50 hover:bg-rose-50 px-2.5 py-1 rounded-lg"
+            >
+              Salir
+            </button>
+          ) : (
+            <button 
+              onClick={onLinkGoogle}
+              className="text-[10px] font-black text-blue-600 uppercase bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg shrink-0"
+            >
+              Conectar
+            </button>
+          )}
+        </div>
+      )}
       
 
       <div className="flex justify-between items-center mb-3">
@@ -2876,79 +3137,92 @@ function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) 
       </div>
 
       {isCreating && (
-        <motion.div 
-          initial={{ opacity: 0, y: -10 }} 
-          animate={{ opacity: 1, y: 0 }} 
-          className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm mb-4 flex flex-col gap-3"
-        >
-          <div className="relative">
-            <input 
-              autoFocus
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-sm font-semibold outline-none focus:border-emerald-500 transition-colors"
-              placeholder="Título de la tarea*"
-              value={newTaskTitle}
-              onChange={e => setNewTaskTitle(e.target.value)}
-            />
-          </div>
-          <div className="relative">
-            <textarea 
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-sm font-medium outline-none focus:border-emerald-500 transition-colors resize-none h-16"
-              placeholder="Descripción (opcional)"
-              value={newTaskDesc}
-              onChange={e => setNewTaskDesc(e.target.value)}
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Frecuencia</label>
-              <select 
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold outline-none focus:border-emerald-500 transition-colors appearance-none"
-                value={newTaskFreq}
-                onChange={e => setNewTaskFreq(e.target.value as any)}
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }} 
+            animate={{ opacity: 1, scale: 1 }} 
+            className="w-full max-w-sm p-5 rounded-3xl border border-slate-200 shadow-2xl flex flex-col gap-3"
+            style={{ backgroundColor: '#0b3464', borderColor: '#7ade92' }}
+          >
+            <div className="flex justify-between items-center mb-1">
+              <h3 className="text-white font-bold tracking-tight">Nueva Tarea</h3>
+              <button 
+                onClick={() => { setIsCreating(false); setNewTaskTitle(''); setNewTaskDesc(''); setNewTaskDate(''); }}
+                className="text-slate-400 hover:text-white p-1"
               >
-                <option value="Diaria">Diaria</option>
-                <option value="Semanal">Semanal</option>
-                <option value="Mensual">Mensual</option>
-                <option value="Eventual">Eventual</option>
-              </select>
+                <X className="w-5 h-5" />
+              </button>
             </div>
-            <div>
-              <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Tipo de Limpieza</label>
-              <select 
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold outline-none focus:border-emerald-500 transition-colors appearance-none"
-                value={newTaskType}
-                onChange={e => setNewTaskType(e.target.value as any)}
+            <div className="relative">
+              <input 
+                autoFocus
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-sm font-semibold outline-none focus:border-emerald-500 transition-colors"
+                placeholder="Título de la tarea*"
+                value={newTaskTitle}
+                onChange={e => setNewTaskTitle(e.target.value)}
+              />
+            </div>
+            <div className="relative">
+              <textarea 
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-sm font-medium outline-none focus:border-emerald-500 transition-colors resize-none h-16"
+                placeholder="Descripción (opcional)"
+                value={newTaskDesc}
+                onChange={e => setNewTaskDesc(e.target.value)}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1" style={{color: '#94a3b8'}}>Frecuencia</label>
+                <select 
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold outline-none focus:border-emerald-500 transition-colors appearance-none"
+                  value={newTaskFreq}
+                  onChange={e => setNewTaskFreq(e.target.value as any)}
+                >
+                  <option value="Diaria">Diaria</option>
+                  <option value="Semanal">Semanal</option>
+                  <option value="Mensual">Mensual</option>
+                  <option value="Eventual">Eventual</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1" style={{color: '#94a3b8'}}>Tipo de Limpieza</label>
+                <select 
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold outline-none focus:border-emerald-500 transition-colors appearance-none"
+                  value={newTaskType}
+                  onChange={e => setNewTaskType(e.target.value as any)}
+                >
+                  <option value="Mantenimiento">Mantenimiento</option>
+                  <option value="Intermedia">Intermedia</option>
+                  <option value="Detalles">Detalles</option>
+                </select>
+              </div>
+            </div>
+            <div className="relative">
+              <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1" style={{color: '#94a3b8'}}>Fecha Vencimiento (Opcional)</label>
+              <input 
+                type="date"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-600 outline-none focus:border-emerald-500 transition-colors"
+                value={newTaskDate}
+                onChange={e => setNewTaskDate(e.target.value)}
+              />
+            </div>
+            <div className="flex gap-2 mt-2">
+              <button 
+                className="flex-1 rounded-xl py-3 text-xs font-bold uppercase transition-colors hover:brightness-110" 
+                style={{ backgroundColor: '#ff2607', color: '#feffff' }}
+                onClick={() => { setIsCreating(false); setNewTaskTitle(''); setNewTaskDesc(''); setNewTaskDate(''); }}
               >
-                <option value="Mantenimiento">Mantenimiento</option>
-                <option value="Intermedia">Intermedia</option>
-                <option value="Detalles">Detalles</option>
-              </select>
+                Cancelar
+              </button>
+              <button 
+                className="flex-1 bg-emerald-500 text-white rounded-xl py-3 text-xs font-bold uppercase shadow-sm shadow-emerald-500/20 hover:bg-emerald-600 transition-colors" 
+                onClick={handleCreateTask}
+              >
+                Guardar
+              </button>
             </div>
-          </div>
-          <div className="relative">
-            <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Fecha Vencimiento (Opcional)</label>
-            <input 
-              type="date"
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-600 outline-none focus:border-emerald-500 transition-colors"
-              value={newTaskDate}
-              onChange={e => setNewTaskDate(e.target.value)}
-            />
-          </div>
-          <div className="flex gap-2 mt-1">
-            <button 
-              className="flex-1 bg-slate-100 text-slate-600 rounded-xl py-3 text-xs font-bold uppercase hover:bg-slate-200 transition-colors" 
-              onClick={() => { setIsCreating(false); setNewTaskTitle(''); setNewTaskDesc(''); setNewTaskDate(''); }}
-            >
-              Cancelar
-            </button>
-            <button 
-              className="flex-1 bg-emerald-500 text-white rounded-xl py-3 text-xs font-bold uppercase shadow-sm shadow-emerald-500/20 hover:bg-emerald-600 transition-colors" 
-              onClick={handleCreateTask}
-            >
-              Guardar
-            </button>
-          </div>
-        </motion.div>
+          </motion.div>
+        </div>
       )}
 
       {/* Task List */}
@@ -2996,6 +3270,19 @@ function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) 
                 
                 <div className="flex items-center gap-1 ml-2">
                   <button 
+                    onClick={() => handleSyncToGoogleCalendar(task)}
+                    disabled={gcalSyncing[task.id]}
+                    className={cn(
+                      "p-2 rounded-xl transition-all",
+                      gcalSynced[task.id] ? "bg-emerald-50 text-emerald-600" : "text-slate-300 hover:bg-slate-50",
+                      gcalSyncing[task.id] && "animate-pulse"
+                    )}
+                    title="Sincronizar con Google Calendar"
+                  >
+                    <Calendar className="w-5 h-5" />
+                  </button>
+
+                  <button 
                     onClick={() => reminders[task.id.toString()] ? removeReminder(task.id) : setShowReminderModal(task.id.toString())}
                     className={cn(
                       "p-2 rounded-xl transition-all",
@@ -3005,9 +3292,27 @@ function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) 
                   >
                     <Bell className={cn("w-5 h-5", reminders[task.id.toString()] && "fill-current animate-bounce")} />
                   </button>
+                  
+                  {(task.created_by_id === user.id || user.rol === 'supervisor') && (
+                    <button 
+                      onClick={() => handleDeleteTask(task.id, task.titulo)}
+                      className="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition-all shrink-0"
+                      title="Eliminar Tarea"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  )}
+
                   <motion.button 
                     whileTap={{ scale: 0.95 }}
-                    onClick={() => onStart(task)}
+                    onClick={() => {
+                      onStart(task);
+                      try {
+                        window.open(window.location.origin + window.location.pathname + "?task_timer=true", "_blank");
+                      } catch (err) {
+                        console.warn("Popup blocked:", err);
+                      }
+                    }}
                     className="p-3 text-emerald-500 hover:bg-emerald-50 rounded-xl transition-colors flex-shrink-0"
                   >
                     <Play className="w-6 h-6 fill-current" />
@@ -3070,6 +3375,29 @@ function TaskSelector({ onStart, shiftActive, user }: { onStart: (t: TareaPlan) 
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {taskNotice && (
+          <motion.div 
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 50, scale: 0.9 }}
+            className="fixed bottom-6 left-4 right-4 md:left-auto md:right-6 md:w-96 z-[500] bg-white border-2 border-emerald-500 rounded-3xl p-5 shadow-2xl flex items-start gap-4 font-sans"
+          >
+            <div className="p-3 bg-emerald-100 text-emerald-600 rounded-2xl shrink-0">
+              <CheckCircle2 className="w-6 h-6" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h4 className="font-black text-sm text-slate-900">¡Tarea Creada con Éxito!</h4>
+              <p className="text-xs text-slate-500 font-medium mt-1 truncate">"{taskNotice}"</p>
+              <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest mt-2">La tarea ya está disponible para el personal.</p>
+            </div>
+            <button onClick={() => setTaskNotice(null)} className="text-slate-400 hover:text-slate-600 p-1 shrink-0">
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>
@@ -3466,7 +3794,51 @@ function useReminderChecker() {
   }, [reminders]);
 }
 
-function SupervisorTasksManager({ user }: { user: Operario }) {
+function SupervisorTasksManager({ 
+  user,
+  googleUser,
+  googleToken,
+  onLinkGoogle,
+  onUnlinkGoogle
+}: { 
+  user: Operario,
+  googleUser?: FirebaseUser | null,
+  googleToken?: string | null,
+  onLinkGoogle?: () => void,
+  onUnlinkGoogle?: () => void
+}) {
+  const [gcalSyncing, setGcalSyncing] = useState<Record<string, boolean>>({});
+  const [gcalSynced, setGcalSynced] = useStickyState<Record<string, boolean>>({}, 'limpieza_sup_gcal_synced');
+
+  const handleSyncToGoogleCalendar = async (task: any) => {
+    if (!googleToken) {
+      if (onLinkGoogle) {
+        if (confirm('Google Calendar no está vinculado. ¿Deseas vincular tu cuenta ahora para sincronizar esta tarea?')) {
+          onLinkGoogle();
+        }
+      } else {
+        alert('Debe vincular su cuenta de Google Calendar desde la pestaña de Perfil.');
+      }
+      return;
+    }
+
+    setGcalSyncing(prev => ({ ...prev, [task.id]: true }));
+    try {
+      const success = await createGoogleCalendarEvent(googleToken, task);
+      if (success) {
+        setGcalSynced((prev: any) => ({ ...prev, [task.id]: true }));
+        alert(`¡Tarea "${task.titulo}" sincronizada con éxito en tu Google Calendar!`);
+      } else {
+        alert('Error al sincronizar con Google Calendar. Por favor reintente o vuelva a vincular su cuenta.');
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert(`Error al sincronizar: ${err.message || err}`);
+    } finally {
+      setGcalSyncing(prev => ({ ...prev, [task.id]: false }));
+    }
+  };
+
   const [tasks, setTasks] = useState<any[]>([]);
   const [operarios, setOperarios] = useState<Operario[]>([]);
   const [loading, setLoading] = useState(true);
@@ -3582,6 +3954,7 @@ function SupervisorTasksManager({ user }: { user: Operario }) {
   });
 
   const [creating, setCreating] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string|number|null>(null);
   
   const [newTaskTitle, setNewTaskTitle] = useState('');
@@ -3613,6 +3986,20 @@ function SupervisorTasksManager({ user }: { user: Operario }) {
     setCreating(true);
   };
 
+  const handleDeleteTask = async (taskId: string | number, title: string) => {
+    if (!confirm(`¿Estás seguro de que deseas eliminar la tarea "${title}"?`)) return;
+    try {
+      const { error } = await supabase.from('tasks').delete().eq('id', taskId);
+      if (error) throw error;
+      setTasks(tasks.filter(t => t.id !== taskId));
+      setToastMessage(`Tarea "${title}" eliminada con éxito`);
+      setExpandedTaskId(null);
+    } catch (error) {
+      console.error('Error in handleDeleteTask:', error);
+      alert('Error al eliminar la tarea');
+    }
+  };
+
   const toggleAsignado = (nombre: string) => {
     setAsignados(prev => prev.includes(nombre) ? prev.filter(n => n !== nombre) : [...prev, nombre]);
   };
@@ -3634,11 +4021,41 @@ function SupervisorTasksManager({ user }: { user: Operario }) {
     try {
       if (editingId) {
         await supabase.from('tasks').update(taskPayload).eq('id', editingId);
+        const updatedTaskObj = { id: editingId, ...taskPayload };
         setTasks(tasks.map(t => t.id === editingId ? { ...t, ...taskPayload } : t));
+        setToastMessage(`Tarea "${taskPayload.titulo}" editada con éxito`);
+
+        // Auto Google Sync if linked
+        if (googleToken) {
+          try {
+            const success = await createGoogleCalendarEvent(googleToken, updatedTaskObj);
+            if (success) {
+              setGcalSynced((prev: any) => ({ ...prev, [editingId]: true }));
+              setToastMessage(`Tarea "${taskPayload.titulo}" editada y sincronizada a Google Calendar`);
+            }
+          } catch (gErr) {
+            console.error('Auto sync update to Google Calendar failed:', gErr);
+          }
+        }
       } else {
         const { data, error } = await supabase.from('tasks').insert(taskPayload).select().single();
         if (error) throw error;
-        setTasks([{ ...data, _estadoSimulado: 'Pendiente' }, ...tasks]);
+        const taskObj = { ...data, _estadoSimulado: 'Pendiente' };
+        setTasks([taskObj, ...tasks]);
+        setToastMessage(`Tarea "${taskPayload.titulo}" creada con éxito`);
+
+        // Auto Google Sync if linked
+        if (googleToken) {
+          try {
+            const success = await createGoogleCalendarEvent(googleToken, taskObj);
+            if (success) {
+              setGcalSynced((prev: any) => ({ ...prev, [data.id]: true }));
+              setToastMessage(`Tarea "${taskPayload.titulo}" creada y sincronizada a Google Calendar`);
+            }
+          } catch (gErr) {
+            console.error('Auto sync to Google Calendar failed:', gErr);
+          }
+        }
       }
       resetForm();
     } catch (error) {
@@ -3667,16 +4084,6 @@ function SupervisorTasksManager({ user }: { user: Operario }) {
         <div className="flex flex-wrap items-center gap-2">
           {!creating && viewMode === 'lista' && (
             <div className="flex flex-wrap gap-2">
-              <div className="relative">
-                <input 
-                  type="text"
-                  placeholder="Buscar..."
-                  value={searchTerm}
-                  onChange={e => setSearchTerm(e.target.value)}
-                  className="bg-slate-50 border border-slate-200 text-slate-600 text-[11px] font-bold rounded-xl px-8 py-2 outline-none focus:border-blue-300 w-32 focus:w-48 transition-all"
-                />
-                <ClipboardList className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-              </div>
               <select 
                 className="bg-slate-50 border border-slate-200 text-slate-600 text-[11px] font-bold rounded-xl px-3 py-2 outline-none"
                 value={estadoFilter}
@@ -3717,6 +4124,34 @@ function SupervisorTasksManager({ user }: { user: Operario }) {
           </button>
         </div>
       </div>
+
+
+      {/* Google Calendar Connection Status Banner */}
+      {onLinkGoogle && onUnlinkGoogle && (
+        <div className="mb-6 bg-slate-50 border border-slate-200 rounded-2xl p-4 flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5 font-bold text-slate-700 min-w-0">
+            <Calendar className={cn("w-5 h-5", googleUser ? "text-emerald-500 animate-pulse" : "text-slate-400")} />
+            <span className="truncate text-slate-600 font-bold">
+              {googleUser ? `Google Calendar Sincronizado: ${googleUser.email}` : "Conectar Google Calendar para programar recordatorios automáticos de tareas"}
+            </span>
+          </div>
+          {googleUser ? (
+            <button 
+              onClick={onUnlinkGoogle}
+              className="text-[10px] font-black text-rose-500 uppercase bg-rose-50/50 hover:bg-rose-50 px-3 py-1.5 rounded-xl border border-rose-100 transition-all"
+            >
+              Cerrar
+            </button>
+          ) : (
+            <button 
+              onClick={onLinkGoogle}
+              className="text-[10px] font-black text-blue-600 uppercase bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-xl transition-all border border-blue-100 shrink-0"
+            >
+              Vincular
+            </button>
+          )}
+        </div>
+      )}
 
 
       {creating ? (
@@ -3932,7 +4367,25 @@ function SupervisorTasksManager({ user }: { user: Operario }) {
                               </div>
                             </div>
                           </div>
-                          <div className="flex items-start">
+                          <div className="flex items-start gap-2">
+                             <button
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 handleSyncToGoogleCalendar(t);
+                               }}
+                               disabled={gcalSyncing[t.id]}
+                               className={cn(
+                                 "px-4 py-2 rounded-xl text-xs font-bold transition-all border-2 flex items-center gap-1.5",
+                                 gcalSynced[t.id] 
+                                   ? "bg-emerald-50 text-emerald-600 border-emerald-100" 
+                                   : "bg-white border-slate-200 text-slate-600 hover:border-emerald-200 hover:text-emerald-600",
+                                 gcalSyncing[t.id] && "animate-pulse"
+                               )}
+                             >
+                               {gcalSyncing[t.id] ? <RefreshCcw className="w-3.5 h-3.5 animate-spin"/> : <Calendar className="w-3.5 h-3.5" />}
+                               Sincronizar
+                             </button>
+
                              <button
                                onClick={(e) => {
                                  e.stopPropagation();
@@ -3941,6 +4394,16 @@ function SupervisorTasksManager({ user }: { user: Operario }) {
                                className="bg-white border border-slate-200 shadow-sm px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:text-blue-600 hover:border-blue-200 transition-colors"
                              >
                                Editar Tarea
+                             </button>
+                             <button
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 handleDeleteTask(t.id, t.titulo);
+                               }}
+                               className="bg-rose-50 border border-rose-100 shadow-sm px-4 py-2 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-100 transition-colors flex items-center gap-1"
+                             >
+                               <Trash2 className="w-3.5 h-3.5" />
+                               Eliminar
                              </button>
                           </div>
                         </div>
@@ -3954,6 +4417,30 @@ function SupervisorTasksManager({ user }: { user: Operario }) {
           </div>
         </div>
       ))}
+
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div 
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 50, scale: 0.9 }}
+            className="fixed bottom-6 left-4 right-4 md:left-auto md:right-6 md:w-96 z-[500] bg-white border-2 border-blue-500 rounded-3xl p-5 shadow-2xl flex items-start gap-4 font-sans"
+          >
+            <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl shrink-0">
+              <CheckCircle2 className="w-6 h-6" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h4 className="font-black text-sm text-slate-900">¡Acción Completada!</h4>
+              <p className="text-xs text-slate-500 font-medium mt-1 leading-relaxed">
+                {toastMessage}
+              </p>
+            </div>
+            <button onClick={() => setToastMessage(null)} className="text-slate-400 hover:text-slate-600 p-1 shrink-0">
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -3981,7 +4468,128 @@ function KPICard({ title, value, icon, trend, sub }: any) {
 
 
 
-function OperarioAccordion({ metric }: { metric: any }) {
+function TimerOnlyScreen({
+  activeTask,
+  taskStart,
+  taskComment,
+  setTaskComment,
+  taskDurationText,
+  onFinish,
+  user
+}: {
+  activeTask: any,
+  taskStart: string | null,
+  taskComment: string,
+  setTaskComment: (c: string) => void,
+  taskDurationText: string,
+  onFinish: () => void,
+  user: any
+}) {
+  const [isFinishedLocal, setIsFinishedLocal] = useState(false);
+
+  const handleLocalFinish = async () => {
+    setIsFinishedLocal(true);
+    await onFinish();
+  };
+
+  if (isFinishedLocal || !activeTask) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center w-full">
+        <motion.div 
+          initial={{ scale: 0.9, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className="bg-white max-w-sm w-full rounded-[32px] p-8 shadow-2xl border border-slate-100 flex flex-col items-center"
+        >
+          <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mb-6">
+            <CheckCircle2 className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-black text-slate-800 tracking-tight">¡Tarea Finalizada!</h2>
+          <p className="text-xs font-bold text-slate-500 mt-2 leading-relaxed">El control de tiempo ha sido registrado con éxito en el sistema.</p>
+          
+          <div className="mt-8 flex flex-col gap-3 w-full">
+            <button 
+              onClick={() => {
+                try {
+                  window.close();
+                } catch(e) {
+                  window.location.href = window.location.origin + window.location.pathname;
+                }
+              }}
+              className="px-6 py-4 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-black uppercase tracking-widest rounded-2xl shadow-xl shadow-emerald-100 transition-colors"
+            >
+              Cerrar esta Pestaña
+            </button>
+            <a 
+              href="/"
+              className="px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-2xl transition-colors text-center"
+            >
+              Volver al Menú Principal
+            </a>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 w-full font-sans">
+      <motion.div 
+        initial={{ y: 20, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        className="bg-white max-w-md w-full rounded-[32px] p-8 shadow-2xl border border-slate-100 flex flex-col"
+      >
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wider mb-6">
+          <Clock className="w-4 h-4 text-emerald-500 animate-pulse" />
+          <span>Control de Tiempo de Operación</span>
+        </div>
+
+        <h2 className="text-2xl font-black text-slate-800 tracking-tight leading-tight">{activeTask.titulo}</h2>
+        
+        <div className="flex gap-2 mt-3 mb-8">
+          <span className="px-2 py-0.5 bg-slate-100 rounded text-[10px] font-bold text-slate-600 uppercase border border-slate-200">
+            {activeTask.frecuencia}
+          </span>
+          {activeTask.tipoLimpieza && (
+            <span className={cn(
+              "px-2 py-0.5 rounded text-[10px] font-black uppercase border",
+              activeTask.tipoLimpieza === 'Mantenimiento' ? "bg-blue-50 text-blue-600 border-blue-100" :
+              activeTask.tipoLimpieza === 'Intermedia' ? "bg-amber-50 text-amber-600 border-amber-100" : "bg-rose-50 text-rose-600 border-rose-100"
+            )}>
+              {activeTask.tipoLimpieza}
+            </span>
+          )}
+        </div>
+
+        {/* CLOCK ACCENT DISPLAY */}
+        <div className="bg-slate-900 text-white rounded-[24px] p-6 text-center select-none shadow-xl shadow-slate-200 mb-8 flex flex-col items-center justify-center">
+          <div className="text-5xl font-mono font-black tracking-widest text-emerald-400">{taskDurationText}</div>
+          <div className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-2">Tiempo Transcurrido</div>
+        </div>
+
+        {/* INPUT FOR COMMENTS */}
+        <div className="mb-6">
+          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 ml-1">Comentarios u Observaciones</label>
+          <textarea
+            value={taskComment}
+            onChange={e => setTaskComment(e.target.value)}
+            className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm focus:border-emerald-500 outline-none resize-none h-24 font-medium transition-colors"
+            placeholder="Introduce detalles sobre la limpieza realizada..."
+          />
+        </div>
+
+        <button 
+          onClick={handleLocalFinish}
+          className="w-full py-4 bg-emerald-500 hover:bg-emerald-600 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-xl shadow-emerald-200 flex items-center justify-center gap-2 transition-all mt-2"
+        >
+          <CheckCircle2 className="w-5 h-5" />
+          Terminar Tarea
+        </button>
+      </motion.div>
+    </div>
+  );
+}
+
+function OperarioAccordion({ metric }: { metric: any, key?: any }) {
   const [isOpen, setIsOpen] = useState(false);
   return (
     <div className="bg-white border-b border-[#c6c6cd] last:border-0 hover:bg-[#f2f4f6]/50 transition-colors">
@@ -4329,10 +4937,31 @@ function DailyReportScreen({ registros, operarios, tasks, supervisorName, onBack
   );
 }
 
-function DailySupervisorReport({ registros, operarios, tasks }: { registros: any[], operarios: any[], tasks: any[] }) {
-  const [filterType, setFilterType] = React.useState<'diario' | 'semanal' | 'mensual' | 'custom'>('diario');
-  const [customStart, setCustomStart] = React.useState('');
-  const [customEnd, setCustomEnd] = React.useState('');
+function DailySupervisorReport({ 
+  registros, 
+  operarios, 
+  tasks,
+  reportDateMode,
+  setReportDateMode,
+  customStart,
+  setCustomStart,
+  customEnd,
+  setCustomEnd
+}: { 
+  registros: any[], 
+  operarios: any[], 
+  tasks: any[],
+  reportDateMode: 'dia' | 'semana' | 'mes' | 'vivo' | 'custom',
+  setReportDateMode: (mode: any) => void,
+  customStart: string,
+  setCustomStart: (val: string) => void,
+  customEnd: string,
+  setCustomEnd: (val: string) => void
+}) {
+  const filterType = reportDateMode === 'dia' ? 'diario' : 
+                     reportDateMode === 'semana' ? 'semanal' : 
+                     reportDateMode === 'mes' ? 'mensual' :
+                     reportDateMode === 'custom' ? 'custom' : 'diario';
 
   const todayStr = React.useMemo(() => getArgentinaDate(), []);
   
@@ -4434,19 +5063,19 @@ function DailySupervisorReport({ registros, operarios, tasks }: { registros: any
           <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 block ml-1">Periodo del Reporte</label>
           <div className="flex bg-slate-100 p-1 rounded-2xl w-full max-w-md">
             <button 
-              onClick={() => setFilterType('diario')}
+              onClick={() => setReportDateMode('dia')}
               className={cn("flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all", filterType === 'diario' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}
             >Diario</button>
             <button 
-              onClick={() => setFilterType('semanal')}
+              onClick={() => setReportDateMode('semana')}
               className={cn("flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all", filterType === 'semanal' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}
             >Semanal</button>
             <button 
-              onClick={() => setFilterType('mensual')}
+              onClick={() => setReportDateMode('mes')}
               className={cn("flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all", filterType === 'mensual' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}
             >Mensual</button>
             <button 
-              onClick={() => setFilterType('custom')}
+              onClick={() => setReportDateMode('custom')}
               className={cn("flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all", filterType === 'custom' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}
             >Personalizado</button>
           </div>
@@ -5060,7 +5689,21 @@ function OperarioStatusGrid({ operarios, registros }: { operarios: any[], regist
   );
 }
 
-function UserProfile({ user, onUpdate }: { user: Operario, onUpdate: (u: Operario) => void }) {
+function UserProfile({ 
+  user, 
+  onUpdate,
+  googleUser,
+  googleToken,
+  onLink,
+  onUnlink
+}: { 
+  user: Operario, 
+  onUpdate: (u: Operario) => void,
+  googleUser?: FirebaseUser | null,
+  googleToken?: string | null,
+  onLink?: () => void,
+  onUnlink?: () => void
+}) {
   const [nombre, setNombre] = useState(user.nombre);
   const [usuario, setUsuario] = useState(user.usuario || '');
   const [email, setEmail] = useState(user.email || '');
@@ -5186,6 +5829,52 @@ function UserProfile({ user, onUpdate }: { user: Operario, onUpdate: (u: Operari
           {loading ? <RefreshCcw className="w-6 h-6 animate-spin mx-auto text-white/50" /> : 'Guardar Cambios'}
         </button>
       </form>
+
+      {onLink && onUnlink && (
+        <div className="mt-8 pt-6 border-t border-slate-100">
+          <h3 className="text-sm font-black text-[#0b3464] mb-3 uppercase tracking-widest flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-emerald-500" /> Vinculación de Calendario
+          </h3>
+          
+          {googleUser ? (
+            <div className="bg-emerald-50 border-2 border-emerald-100 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-black text-emerald-800 uppercase tracking-wider flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Conectado con Google e-Mail
+                </p>
+                <p className="text-xs font-bold text-slate-500 truncate mt-0.5">{googleUser.email}</p>
+              </div>
+              <button 
+                type="button"
+                onClick={onUnlink}
+                className="px-4 py-2 bg-white text-rose-600 border border-rose-200 hover:bg-rose-50 rounded-xl text-xs font-bold transition-all self-start sm:self-center shrink-0 uppercase tracking-wider"
+              >
+                Desvincular
+              </button>
+            </div>
+          ) : (
+            <div className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl p-5 text-center">
+              <p className="text-xs font-extrabold text-slate-600 leading-normal mb-4">
+                Vincula tu cuenta para ver y sincronizar tus tareas directamente en tu Google Calendar. Podrás recibir notificaciones y organizar tu jornada.
+              </p>
+              <button
+                type="button"
+                onClick={onLink}
+                className="inline-flex items-center gap-2.5 px-6 py-3 bg-white border-2 border-slate-200 hover:border-slate-300 rounded-2xl text-xs font-black text-slate-700 shadow-sm transition-all uppercase tracking-widest"
+              >
+                <svg className="w-4.5 h-4.5" viewBox="0 0 48 48">
+                  <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                  <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                  <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                  <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                </svg>
+                Vincular Google Calendar
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </motion.div>
   );
 }
@@ -5483,14 +6172,22 @@ function SupervisorDashboard({
   onUserUpdate,
   targetCoords,
   setTargetCoords,
-  currentCoords
+  currentCoords,
+  googleUser,
+  googleToken,
+  onLinkGoogle,
+  onUnlinkGoogle
 }: { 
   user: Operario, 
   onLogout: () => void, 
   onUserUpdate: (u: Operario) => void,
   targetCoords: {lat: number, lng: number} | null,
   setTargetCoords: (coords: {lat: number, lng: number} | null) => void,
-  currentCoords: {lat: number, lng: number} | null
+  currentCoords: {lat: number, lng: number} | null,
+  googleUser?: FirebaseUser | null,
+  googleToken?: string | null,
+  onLinkGoogle?: () => void,
+  onUnlinkGoogle?: () => void
 }) {
   const installProps = usePWAInstall();
   const [showPWAHelp, setShowPWAHelp] = useState(false);
@@ -5502,7 +6199,9 @@ function SupervisorDashboard({
   const [menuOpen, setMenuOpen] = useState(false);
 
   // Filters for Reportes & Dashboard
-  const [reportDateMode, setReportDateMode] = useState<'dia'|'semana'|'mes'|'vivo'>('vivo');
+  const [reportDateMode, setReportDateMode] = useState<'dia'|'semana'|'mes'|'vivo'|'custom'>('vivo');
+  const [customStart, setCustomStart] = useState<string>('');
+  const [customEnd, setCustomEnd] = useState<string>('');
   const [reportUserFilter, setReportUserFilter] = useState('Todos');
   const [operarios, setOperarios] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
@@ -5513,12 +6212,18 @@ function SupervisorDashboard({
   };
 
   useEffect(() => {
+    if (tab === 'analitica' && reportDateMode === 'vivo') {
+      setReportDateMode('dia');
+    }
+  }, [tab]);
+
+  useEffect(() => {
     const fetchLogs = async () => {
       const { data, error } = await supabase
         .from('logs')
         .select('*')
         .order('created_at', { ascending: false })
-        .limit(100);
+        .limit(1000);
       if (error) console.error(error);
       else setRegistros(data || []);
     };
@@ -5565,7 +6270,7 @@ function SupervisorDashboard({
         }
       };
 
-      if (tab === 'reportes' || tab === 'dashboard') {
+      if (tab === 'analitica' || tab === 'dashboard') {
         let query = supabase.from('logs').select('*').order('inicio', { ascending: false });
         
         let startDate = new Date();
@@ -5581,6 +6286,10 @@ function SupervisorDashboard({
         } else if (reportDateMode === 'mes') {
           startDate.setMonth(startDate.getMonth() - 1);
           query = query.gte('inicio', startDate.toISOString());
+        } else if (reportDateMode === 'custom' && customStart && customEnd) {
+          const startIso = new Date(customStart + 'T00:00:00').toISOString();
+          const endIso = new Date(customEnd + 'T23:59:59').toISOString();
+          query = query.gte('inicio', startIso).lte('inicio', endIso);
         }
 
         try {
@@ -5605,7 +6314,7 @@ function SupervisorDashboard({
       setLoading(false);
     }
     fetchData();
-  }, [tab, reportDateMode, reportUserFilter]);
+  }, [tab, reportDateMode, reportUserFilter, customStart, customEnd]);
 
   // Analytics Helpers
   const metrics = React.useMemo(() => {
@@ -5913,7 +6622,15 @@ function SupervisorDashboard({
                 >{st}</button>
               ))}
             </div>
-            {subTab === 'tareas' && <SupervisorTasksManager user={user} />}
+            {subTab === 'tareas' && (
+              <SupervisorTasksManager 
+                user={user} 
+                googleUser={googleUser}
+                googleToken={googleToken}
+                onLinkGoogle={onLinkGoogle}
+                onUnlinkGoogle={onUnlinkGoogle}
+              />
+            )}
             {subTab === 'turnos' && <SupervisorShiftManager />}
             {subTab === 'stock' && <SupervisorStockManager />}
           </div>
@@ -5933,7 +6650,19 @@ function SupervisorDashboard({
                 >{st}</button>
               ))}
             </div>
-            {subTab === 'diario' && <DailySupervisorReport registros={registros} operarios={operarios} tasks={tasks} />}
+            {subTab === 'diario' && (
+              <DailySupervisorReport 
+                registros={registros} 
+                operarios={operarios} 
+                tasks={tasks} 
+                reportDateMode={reportDateMode}
+                setReportDateMode={setReportDateMode}
+                customStart={customStart}
+                setCustomStart={setCustomStart}
+                customEnd={customEnd}
+                setCustomEnd={setCustomEnd}
+              />
+            )}
             {subTab === 'historico' && (
               <JibbleHourReport 
                 registros={registros} 
@@ -6035,7 +6764,16 @@ function SupervisorDashboard({
                 </div>
               </div>
             )}
-            {subTab === 'perfil' && <UserProfile user={user} onUpdate={onUserUpdate} />}
+            {subTab === 'perfil' && (
+              <UserProfile 
+                user={user} 
+                onUpdate={onUserUpdate} 
+                googleUser={googleUser}
+                googleToken={googleToken}
+                onLink={onLinkGoogle}
+                onUnlink={onUnlinkGoogle}
+              />
+            )}
           </div>
         )}
       </div>
