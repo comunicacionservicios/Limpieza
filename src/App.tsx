@@ -129,7 +129,44 @@ function calculateDistance(
 const ARG_TZ = "America/Argentina/Buenos_Aires";
 
 function getArgentinaDate() {
-  return new Date().toLocaleDateString("en-CA", { timeZone: ARG_TZ });
+  try {
+    return new Date().toLocaleDateString("en-CA", { timeZone: ARG_TZ });
+  } catch (err) {
+    const d = new Date();
+    // Argentina is always UTC-3
+    const argTime = d.getTime() - (3 * 60 * 60 * 1000);
+    const argDate = new Date(argTime);
+    const yyyy = argDate.getUTCFullYear();
+    const mm = String(argDate.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(argDate.getUTCDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+}
+
+function getArgentinaDateString(date: Date | string | number) {
+  const d = new Date(date);
+  try {
+    return d.toLocaleDateString("en-CA", { timeZone: ARG_TZ });
+  } catch (err) {
+    if (isNaN(d.getTime())) {
+      const now = new Date();
+      return now.toISOString().split("T")[0];
+    }
+    const argTime = d.getTime() - (3 * 60 * 60 * 1000);
+    const argDate = new Date(argTime);
+    const yyyy = argDate.getUTCFullYear();
+    const mm = String(argDate.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(argDate.getUTCDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+}
+
+function getArgLocalDate(dateVal: Date | string | number) {
+  const d = new Date(dateVal);
+  if (isNaN(d.getTime())) {
+    return new Date();
+  }
+  return new Date(d.getTime() - 3 * 60 * 60 * 1000);
 }
 
 function formatArgDate(
@@ -137,7 +174,17 @@ function formatArgDate(
   options: Intl.DateTimeFormatOptions = {},
 ) {
   const d = new Date(date);
-  return d.toLocaleDateString("es-AR", { timeZone: ARG_TZ, ...options });
+  if (isNaN(d.getTime())) return "Fecha inválida";
+  try {
+    return d.toLocaleDateString("es-AR", { timeZone: ARG_TZ, ...options });
+  } catch (err) {
+    // Fallback using UTC-3 offset components
+    const argDate = new Date(d.getTime() - (3 * 60 * 60 * 1000));
+    const day = String(argDate.getUTCDate()).padStart(2, "0");
+    const month = String(argDate.getUTCMonth() + 1).padStart(2, "0");
+    const year = argDate.getUTCFullYear();
+    return `${day}/${month}/${year}`;
+  }
 }
 
 function formatArgTime(
@@ -145,12 +192,31 @@ function formatArgTime(
   options: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit" },
 ) {
   const d = new Date(date);
-  return d.toLocaleTimeString("es-AR", { timeZone: ARG_TZ, ...options });
+  if (isNaN(d.getTime())) return "H:i";
+  try {
+    return d.toLocaleTimeString("es-AR", { timeZone: ARG_TZ, ...options });
+  } catch (err) {
+    const argDate = new Date(d.getTime() - (3 * 60 * 60 * 1000));
+    const hours = String(argDate.getUTCHours()).padStart(2, "0");
+    const minutes = String(argDate.getUTCMinutes()).padStart(2, "0");
+    return `${hours}:${minutes}`;
+  }
 }
 
 function formatArgDateTime(date: Date | string | number) {
   const d = new Date(date);
-  return d.toLocaleString("es-AR", { timeZone: ARG_TZ });
+  if (isNaN(d.getTime())) return "Fecha inválida";
+  try {
+    return d.toLocaleString("es-AR", { timeZone: ARG_TZ });
+  } catch (err) {
+    const argDate = new Date(d.getTime() - (3 * 60 * 60 * 1000));
+    const day = String(argDate.getUTCDate()).padStart(2, "0");
+    const month = String(argDate.getUTCMonth() + 1).padStart(2, "0");
+    const year = argDate.getUTCFullYear();
+    const hours = String(argDate.getUTCHours()).padStart(2, "0");
+    const minutes = String(argDate.getUTCMinutes()).padStart(2, "0");
+    return `${day}/${month}/${year} ${hours}:${minutes}`;
+  }
 }
 
 function formatDuration(startTimeIso: string | null) {
@@ -2545,10 +2611,10 @@ export default function App() {
             const isOverdue =
               t.fecha_vencimiento &&
               t.fecha_vencimiento < todayStr &&
-              t.last_completed_date !== todayStr;
+              (!t.last_completed_date || getArgentinaDateString(t.last_completed_date) !== todayStr);
             const isDueToday =
               t.fecha_vencimiento === todayStr &&
-              t.last_completed_date !== todayStr;
+              (!t.last_completed_date || getArgentinaDateString(t.last_completed_date) !== todayStr);
 
             if (isToday && user.rol === "operario") {
               notifs.push({
@@ -3341,8 +3407,15 @@ function Dashboard({
       const stored = window.localStorage.getItem("limpieza_task_reminders");
       if (!stored) return;
 
-      const reminders: Record<string, { time: string; title: string }> =
-        JSON.parse(stored);
+      let reminders: Record<string, { time: string; title: string }> = {};
+      try {
+        reminders = JSON.parse(stored);
+      } catch (err) {
+        console.warn("Corrupted notification reminders in local storage:", err);
+        window.localStorage.removeItem("limpieza_task_reminders");
+        return;
+      }
+
       const now = new Date();
       let changed = false;
 
@@ -3977,34 +4050,30 @@ function TaskSelector({
 
     // Completion status filter
     if (t.last_completed_date) {
-      const completedAt = new Date(t.last_completed_date);
-      const now = new Date();
+      const todayStr = getArgentinaDate();
+      const compDateStr = getArgentinaDateString(t.last_completed_date);
 
       if (t.frecuencia === "Diaria") {
-        if (completedAt.toDateString() === now.toDateString()) {
+        if (compDateStr === todayStr) {
           return false; // Completed today
         }
       } else if (t.frecuencia === "Semanal") {
-        const diffTime = Math.abs(now.getTime() - completedAt.getTime());
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        // Simple 7-day week window (alternatively align with Monday)
-        if (
-          diffDays <= 7 &&
-          now.getDay() >= completedAt.getDay() &&
-          now.getTime() - completedAt.getTime() < 7 * 24 * 60 * 60 * 1000
-        ) {
-          return false; // Very rough "this week" check
+        const argNow = getArgLocalDate(new Date());
+        const argCompleted = getArgLocalDate(t.last_completed_date);
+        const diff = argNow.getUTCDay() === 0 ? -6 : 1 - argNow.getUTCDay();
+        const argStartOfWeek = new Date(argNow);
+        argStartOfWeek.setUTCDate(argNow.getUTCDate() + diff);
+        argStartOfWeek.setUTCHours(0, 0, 0, 0);
+
+        if (argCompleted >= argStartOfWeek) {
+          return false; // Completed this week
         }
-        // More precise: check if they are in the same ISO week or if they are less than 7 days ago
-        // For simplicity, let's say "within last 7 days" OR "same week"
-        const startOfWeek = new Date(now);
-        startOfWeek.setDate(now.getDate() - now.getDay());
-        startOfWeek.setHours(0, 0, 0, 0);
-        if (completedAt >= startOfWeek) return false;
       } else if (t.frecuencia === "Mensual") {
+        const argNow = getArgLocalDate(new Date());
+        const argCompleted = getArgLocalDate(t.last_completed_date);
         if (
-          completedAt.getMonth() === now.getMonth() &&
-          completedAt.getFullYear() === now.getFullYear()
+          argCompleted.getUTCMonth() === argNow.getUTCMonth() &&
+          argCompleted.getUTCFullYear() === argNow.getUTCFullYear()
         ) {
           return false; // Completed this month
         }
@@ -5179,28 +5248,34 @@ function SupervisorTasksManager({
       const mappedData = tasksData.map((t: any) => {
         let isCompletedToday = false;
         if (t.last_completed_date) {
-          const completedAt = new Date(t.last_completed_date);
-          const now = new Date();
+          const todayStr = getArgentinaDate();
+          const compDateStr = getArgentinaDateString(t.last_completed_date);
 
-          if (
-            t.frecuencia === "Diaria" &&
-            completedAt.toDateString() === now.toDateString()
-          ) {
-            isCompletedToday = true;
+          if (t.frecuencia === "Diaria") {
+            if (compDateStr === todayStr) {
+              isCompletedToday = true;
+            }
           } else if (t.frecuencia === "Semanal") {
-            const startOfWeek = new Date(now);
-            startOfWeek.setDate(now.getDate() - now.getDay());
-            startOfWeek.setHours(0, 0, 0, 0);
-            if (completedAt >= startOfWeek) isCompletedToday = true;
+            const argNow = getArgLocalDate(new Date());
+            const argCompleted = getArgLocalDate(t.last_completed_date);
+            const diff = argNow.getUTCDay() === 0 ? -6 : 1 - argNow.getUTCDay();
+            const argStartOfWeek = new Date(argNow);
+            argStartOfWeek.setUTCDate(argNow.getUTCDate() + diff);
+            argStartOfWeek.setUTCHours(0, 0, 0, 0);
+
+            if (argCompleted >= argStartOfWeek) {
+              isCompletedToday = true;
+            }
           } else if (t.frecuencia === "Mensual") {
+            const argNow = getArgLocalDate(new Date());
+            const argCompleted = getArgLocalDate(t.last_completed_date);
             if (
-              completedAt.getMonth() === now.getMonth() &&
-              completedAt.getFullYear() === now.getFullYear()
+              argCompleted.getUTCMonth() === argNow.getUTCMonth() &&
+              argCompleted.getUTCFullYear() === argNow.getUTCFullYear()
             ) {
               isCompletedToday = true;
             }
           } else if (t.frecuencia === "Eventual") {
-            // Eventual task is just completed or not
             isCompletedToday = true;
           }
         }
