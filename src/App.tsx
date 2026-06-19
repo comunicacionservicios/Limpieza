@@ -57,6 +57,7 @@ import {
 } from "./lib/googleCalendar";
 import type { User as FirebaseUser } from "firebase/auth";
 
+import { SupervisorTimesheetModule } from "./components/SupervisorTimesheetModule";
 import {
   BarChart,
   Bar,
@@ -169,7 +170,7 @@ function getArgLocalDate(dateVal: Date | string | number) {
   return new Date(d.getTime() - 3 * 60 * 60 * 1000);
 }
 
-function formatArgDate(
+export function formatArgDate(
   date: Date | string | number,
   options: Intl.DateTimeFormatOptions = {},
 ) {
@@ -187,7 +188,7 @@ function formatArgDate(
   }
 }
 
-function formatArgTime(
+export function formatArgTime(
   date: Date | string | number,
   options: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit" },
 ) {
@@ -2791,14 +2792,6 @@ export default function App() {
         <SupervisorDashboard
           user={user}
           onLogout={handleLogout}
-          onUserUpdate={setUser}
-          targetCoords={targetCoords}
-          setTargetCoords={setTargetCoords}
-          currentCoords={currentCoords}
-          googleUser={googleUser}
-          googleToken={googleToken}
-          onLinkGoogle={handleLinkGoogleCalendar}
-          onUnlinkGoogle={handleUnlinkGoogleCalendar}
         />
 
         <AnimatePresence>
@@ -3081,6 +3074,12 @@ export default function App() {
           googleToken={googleToken}
           handleLinkGoogleCalendar={handleLinkGoogleCalendar}
           handleUnlinkGoogleCalendar={handleUnlinkGoogleCalendar}
+          shiftLogId={shiftLogId}
+          setShiftLogId={setShiftLogId}
+          breakLogId={breakLogId}
+          setBreakLogId={setBreakLogId}
+          taskLogId={taskLogId}
+          setTaskLogId={setTaskLogId}
         />
 
         <AnimatePresence>
@@ -3159,6 +3158,12 @@ function Dashboard({
   googleToken,
   handleLinkGoogleCalendar,
   handleUnlinkGoogleCalendar,
+  shiftLogId,
+  setShiftLogId,
+  breakLogId,
+  setBreakLogId,
+  taskLogId,
+  setTaskLogId,
 }: any) {
   const time = useCurrentTime();
   const [shiftDurationText, setShiftDurationText] = useState("00:00:00");
@@ -3248,12 +3253,65 @@ function Dashboard({
     startIso: string,
     comentario?: string,
     isOngoing: boolean = false,
-  ) => {
+    existingLogId?: string | null,
+  ): Promise<string | null> => {
     const end = isOngoing ? null : new Date();
     const start = new Date(startIso);
     const durationMinutes = isOngoing
       ? 0
       : Math.max(1, Math.round((end!.getTime() - start.getTime()) / 60000));
+
+    if (existingLogId) {
+      if (!navigator.onLine) {
+        return existingLogId;
+      }
+      try {
+        const updatePayload: any = {
+          fin: end ? end.toISOString() : null,
+          duracion_minutos: durationMinutes,
+          detalles: comentario || null,
+          accion: comentario ? `${accion} (Obs: ${comentario})` : accion,
+        };
+
+        const { error } = await supabase
+          .from("logs")
+          .update(updatePayload)
+          .eq("id", existingLogId);
+
+        if (error) throw error;
+
+        // Also update normalized table if it's task completion or attendance
+        if (accion.startsWith("Tarea: ")) {
+          const taskTitulo = accion.replace("Tarea: ", "");
+          await supabase
+            .from("task_completions")
+            .update({
+              fin: end ? end.toISOString() : null,
+              duracion_minutos: durationMinutes,
+              comentarios: comentario || null,
+            })
+            .eq("operario_id", user?.id || "unknown")
+            .eq("task_titulo", taskTitulo)
+            .is("fin", null);
+        } else if (accion === "Turno" || accion === "Descanso") {
+          await supabase
+            .from("asistencia")
+            .update({
+              fin: end ? end.toISOString() : null,
+              duracion_minutos: durationMinutes,
+              detalles: comentario || null,
+            })
+            .eq("operario_id", user?.id || "unknown")
+            .eq("tipo_registro", accion)
+            .is("fin", null);
+        }
+
+        return existingLogId;
+      } catch (err) {
+        console.error("Error updating log in Supabase:", err);
+        return existingLogId;
+      }
+    }
 
     const payload: any = {
       operario_id: user?.id || "unknown",
@@ -3271,15 +3329,64 @@ function Dashboard({
       const pending = pendingJson ? JSON.parse(pendingJson) : [];
       pending.push(payload);
       localStorage.setItem("limpieza_pending_sync", JSON.stringify(pending));
-      return;
+      return null;
     }
 
     try {
-      const { error } = await supabase.from("logs").insert(payload);
+      const { data, error } = await supabase
+        .from("logs")
+        .insert(payload)
+        .select()
+        .single();
       if (error) {
         console.error("Supabase insert error details:", error);
         throw error;
       }
+
+      const createdLogId = data?.id || null;
+
+      // Duplicate in dedicated normalized tables safely
+      if (accion.startsWith("Tarea: ")) {
+        const taskTitulo = accion.replace("Tarea: ", "");
+        let taskId: string | null = null;
+        try {
+          const { data: tData } = await supabase
+            .from("tasks")
+            .select("id")
+            .eq("titulo", taskTitulo)
+            .limit(1);
+          if (tData && tData.length > 0) {
+            taskId = tData[0].id;
+          }
+        } catch (e) {
+          console.warn("Could not find matching task ID", e);
+        }
+
+        await supabase.from("task_completions").insert({
+          task_id: taskId,
+          task_titulo: taskTitulo,
+          operario_id: user?.id || "unknown",
+          operario_nombre: user?.nombre || "Desconocido",
+          inicio: start.toISOString(),
+          fin: end ? end.toISOString() : null,
+          duracion_minutos: durationMinutes,
+          comentarios: comentario || null,
+          fecha_argentina: formatArgDate(start),
+        });
+      } else if (accion === "Turno" || accion === "Descanso") {
+        await supabase.from("asistencia").insert({
+          operario_id: user?.id || "unknown",
+          operario_nombre: user?.nombre || "Desconocido",
+          tipo_registro: accion,
+          inicio: start.toISOString(),
+          fin: end ? end.toISOString() : null,
+          duracion_minutos: durationMinutes,
+          detalles: comentario || null,
+          fecha_argentina: formatArgDate(start),
+        });
+      }
+
+      return createdLogId;
     } catch (error: any) {
       console.error("Error saving record to Supabase:", error);
       // Fallback: save to localStorage if DB fails
@@ -3287,6 +3394,7 @@ function Dashboard({
       const pending = pendingJson ? JSON.parse(pendingJson) : [];
       pending.push(payload);
       localStorage.setItem("limpieza_pending_sync", JSON.stringify(pending));
+      return null;
     }
   };
 
@@ -3315,11 +3423,14 @@ function Dashboard({
     const now = new Date().toISOString();
     if (shiftState === "idle") {
       setJornadaStart(now);
-      recordTime("Turno", now, undefined, true);
+      const logId = await recordTime("Turno", now, undefined, true);
+      setShiftLogId(logId);
     }
     if (shiftState === "paused" && breakStart) {
-      await recordTime("Descanso", breakStart);
-      recordTime("Turno", now, undefined, true);
+      await recordTime("Descanso", breakStart, undefined, false, breakLogId);
+      setBreakLogId(null);
+      const logId = await recordTime("Turno", now, undefined, true);
+      setShiftLogId(logId);
     }
     setShiftStart(now);
     setBreakStart(null);
@@ -3328,21 +3439,25 @@ function Dashboard({
 
   const handlePauseShift = async () => {
     if (shiftState === "active" && shiftStart) {
-      await recordTime("Turno (Tramo)", shiftStart);
+      await recordTime("Turno (Tramo)", shiftStart, undefined, false, shiftLogId);
+      setShiftLogId(null);
     }
     const now = new Date().toISOString();
     setShiftState("paused");
     setShiftStart(null);
     setBreakStart(now);
-    recordTime("Descanso", now, undefined, true);
+    const logId = await recordTime("Descanso", now, undefined, true);
+    setBreakLogId(logId);
   };
 
   const handleEndShift = async () => {
     if (shiftState === "active" && shiftStart) {
-      await recordTime("Turno", shiftStart);
+      await recordTime("Turno", shiftStart, undefined, false, shiftLogId);
+      setShiftLogId(null);
     }
     if (shiftState === "paused" && breakStart) {
-      await recordTime("Descanso (Final)", breakStart);
+      await recordTime("Descanso (Final)", breakStart, undefined, false, breakLogId);
+      setBreakLogId(null);
     }
 
     // Registrar la Jornada Completa (desde el primer Inicio de Jornada hasta ahora)
@@ -3357,7 +3472,7 @@ function Dashboard({
 
     // Auto-finish tasks if shift ends
     if (activeTask && taskStart) {
-      handleFinishTask();
+      await handleFinishTask();
     }
   };
 
@@ -3369,12 +3484,14 @@ function Dashboard({
     const now = new Date().toISOString();
     setActiveTask(task);
     setTaskStart(now);
-    recordTime(`Tarea: ${task.titulo}`, now, undefined, true);
+    const logId = await recordTime(`Tarea: ${task.titulo}`, now, undefined, true);
+    setTaskLogId(logId);
   };
 
   const handleFinishTask = async () => {
     if (activeTask && taskStart) {
-      await recordTime(`Tarea: ${activeTask.titulo}`, taskStart, taskComment);
+      await recordTime(`Tarea: ${activeTask.titulo}`, taskStart, taskComment, false, taskLogId);
+      setTaskLogId(null);
 
       try {
         await supabase
@@ -3957,6 +4074,7 @@ function TaskSelector({
   };
 
   const [tasks, setTasks] = useState<TareaPlan[]>([]);
+  const [completedTitles, setCompletedTitles] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [page, setPage] = useState(0);
@@ -4016,6 +4134,53 @@ function TaskSelector({
 
       if (error) throw error;
 
+      // Fetch task completions for this operario to filter completed tasks out
+      let completedTaskTitulos: string[] = [];
+      try {
+        const { data: compData } = await supabase
+          .from("task_completions")
+          .select("task_titulo, inicio")
+          .eq("operario_id", user.id)
+          .not("fin", "is", null);
+
+        if (compData) {
+          const todayStr = getArgentinaDate();
+          compData.forEach((c: any) => {
+            const compDateStr = getArgentinaDateString(c.inicio);
+            if (filter === "Diaria") {
+              if (compDateStr === todayStr) {
+                completedTaskTitulos.push(c.task_titulo);
+              }
+            } else if (filter === "Semanal") {
+              const argNow = getArgLocalDate(new Date());
+              const argCompleted = getArgLocalDate(c.inicio);
+              const diff = argNow.getUTCDay() === 0 ? -6 : 1 - argNow.getUTCDay();
+              const argStartOfWeek = new Date(argNow);
+              argStartOfWeek.setUTCDate(argNow.getUTCDate() + diff);
+              argStartOfWeek.setUTCHours(0, 0, 0, 0);
+              if (argCompleted >= argStartOfWeek) {
+                completedTaskTitulos.push(c.task_titulo);
+              }
+            } else if (filter === "Mensual") {
+              const argNow = getArgLocalDate(new Date());
+              const argCompleted = getArgLocalDate(c.inicio);
+              if (
+                argCompleted.getUTCMonth() === argNow.getUTCMonth() &&
+                argCompleted.getUTCFullYear() === argNow.getUTCFullYear()
+              ) {
+                completedTaskTitulos.push(c.task_titulo);
+              }
+            } else if (filter === "Eventual") {
+              completedTaskTitulos.push(c.task_titulo);
+            }
+          });
+        }
+      } catch (e) {
+        console.warn("Could not fetch task completions", e);
+      }
+
+      setCompletedTitles(completedTaskTitulos);
+
       if (isInitial) {
         setTasks(data || []);
       } else {
@@ -4045,6 +4210,11 @@ function TaskSelector({
         (t.descripcion || "").toLowerCase().includes(searchTerm.toLowerCase())
       )
     ) {
+      return false;
+    }
+
+    // New normalized completions filter
+    if (completedTitles.includes(t.titulo)) {
       return false;
     }
 
@@ -8389,820 +8559,743 @@ function PersonalManagement() {
 function SupervisorDashboard({
   user,
   onLogout,
-  onUserUpdate,
-  targetCoords,
-  setTargetCoords,
-  currentCoords,
-  googleUser,
-  googleToken,
-  onLinkGoogle,
-  onUnlinkGoogle,
 }: {
   user: Operario;
   onLogout: () => void;
-  onUserUpdate: (u: Operario) => void;
-  targetCoords: { lat: number; lng: number } | null;
-  setTargetCoords: (coords: { lat: number; lng: number } | null) => void;
-  currentCoords: { lat: number; lng: number } | null;
-  googleUser?: FirebaseUser | null;
-  googleToken?: string | null;
-  onLinkGoogle?: () => void;
-  onUnlinkGoogle?: () => void;
 }) {
-  const installProps = usePWAInstall();
-  const [showPWAHelp, setShowPWAHelp] = useState(false);
-  const [showReport, setShowReport] = useState(false);
-  const [tab, setTab] = useState<
-    "dashboard" | "gestion" | "analitica" | "incidencias" | "config"
-  >("dashboard");
-  const [subTab, setSubTab] = useState<string>("general");
+  const [operarios, setOperarios] = useState<any[]>([]);
   const [registros, setRegistros] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [nowTime, setNowTime] = useState<number>(Date.now());
+  const [selectedOperarioId, setSelectedOperarioId] = useState<number | null>(null);
 
-  // Filters for Reportes & Dashboard
-  const [reportDateMode, setReportDateMode] = useState<
-    "dia" | "semana" | "mes" | "vivo" | "custom"
-  >("vivo");
-  const [customStart, setCustomStart] = useState<string>("");
-  const [customEnd, setCustomEnd] = useState<string>("");
-  const [reportUserFilter, setReportUserFilter] = useState("Todos");
-  const [operarios, setOperarios] = useState<any[]>([]);
-  const [tasks, setTasks] = useState<any[]>([]);
-  const [stock, setStock] = useState<any[]>([]);
 
-  const handleLogoutAdmin = () => {
-    onLogout();
+  const fetchOps = async () => {
+    try {
+      const { data } = await supabase
+        .from("users")
+        .select("*")
+        .eq("rol", "operario")
+        .eq("activo", true)
+        .order("nombre");
+      setOperarios(data || []);
+    } catch (e) {
+      console.error("Error fetching operarios:", e);
+    }
+  };
+
+  const fetchLogs = async () => {
+    try {
+      const { data } = await supabase
+        .from("logs")
+        .select("*")
+        .order("inicio", { ascending: false })
+        .limit(200);
+      setRegistros(data || []);
+    } catch (e) {
+      console.error("Error fetching logs:", e);
+    }
   };
 
   useEffect(() => {
-    if (tab === "analitica" && reportDateMode === "vivo") {
-      setReportDateMode("dia");
+    async function loadData() {
+      setLoading(true);
+      await Promise.all([fetchOps(), fetchLogs()]);
+      setLoading(false);
     }
-  }, [tab]);
+    loadData();
 
-  useEffect(() => {
-    const fetchLogs = async () => {
-      const { data, error } = await supabase
-        .from("logs")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(1000);
-      if (error) console.error(error);
-      else setRegistros(data || []);
-    };
-    fetchLogs();
+    // Subscribe to logs changes in real-time
     const channel = supabase
-      .channel("realtime:logs-report")
+      .channel("supervisor-live-status-realtime")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "logs" },
-        fetchLogs,
+        () => {
+          fetchLogs();
+        }
       )
       .subscribe();
+
+    // Periodic safety sync fallback
+    const interval = setInterval(() => {
+      fetchLogs();
+      fetchOps();
+    }, 12000);
+
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(interval);
     };
   }, []);
 
-  useEffect(() => {
-    async function fetchData() {
-      setLoading(true);
+  // Compute live state matrix using real-time local calculations
+  const operariosEstadoEnVivo = React.useMemo(() => {
+    // Current local Argentinian date representation
+    const dObj = new Date();
+    const yVal = dObj.getFullYear();
+    const mVal = String(dObj.getMonth() + 1).padStart(2, "0");
+    const dVal = String(dObj.getDate()).padStart(2, "0");
+    const todayStr = `${yVal}-${mVal}-${dVal}`;
 
-      const fetchOps = async () => {
-        if (operarios.length === 0) {
-          try {
-            const { data } = await supabase
-              .from("users")
-              .select("*")
-              .order("nombre");
-            setOperarios(data || []);
-          } catch (error) {
-            console.error(error);
+    // Load shifts scheduled
+    let shifts: any[] = [];
+    try {
+      const saved = localStorage.getItem("limpieza_turnos_scheduled");
+      if (saved) {
+        shifts = JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error("Error decoding schedules from localStorage:", e);
+    }
+
+    return operarios.map((op) => {
+      const opNameNorm = op.nombre?.trim().toLowerCase();
+
+      // Look up if operator had a shift scheduled for today
+      const todayShift = shifts.find(
+        (s: any) =>
+          s.operarioNombre?.trim().toLowerCase() === opNameNorm &&
+          s.fecha === todayStr
+      );
+
+      // Filter all logs of today or inside current 12-hour window
+      const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+      const opLogs = registros
+        .filter(
+          (r) =>
+            r.operario_nombre?.trim().toLowerCase() === opNameNorm &&
+            (r.inicio >= twelveHoursAgo || (r.inicio && r.inicio.startsWith(todayStr)))
+        )
+        .sort((a, b) => new Date(b.inicio).getTime() - new Date(a.inicio).getTime());
+
+      const latestLog = opLogs[0];
+
+      // Determine checks for delays (tardiness)
+      let isLateOffline = false;
+      let hasLateCheckIn = false;
+
+      // First shift log of today
+      const firstTurnoLog = [...opLogs]
+        .reverse()
+        .find(
+          (r) =>
+            r.accion?.includes("Turno") ||
+            r.accion?.includes("Sesión") ||
+            r.accion?.includes("Jornada")
+        );
+
+      if (todayShift) {
+        // Build estimated start date target
+        const [h, m] = todayShift.inicioEstimado.split(":").map(Number);
+        const schedTime = new Date();
+        schedTime.setHours(h, m, 0, 0);
+
+        if (!firstTurnoLog) {
+          // If the operator hasn't logged in today and 15 mins passed the expected check-in
+          if (Date.now() > schedTime.getTime() + 15 * 60 * 1000) {
+            isLateOffline = true;
+          }
+        } else {
+          // If check-in happened 15 minutes after scheduled check-in time
+          const checkInTime = new Date(firstTurnoLog.inicio);
+          const checkHour = checkInTime.getHours();
+          const checkMin = checkInTime.getMinutes();
+          if (checkHour > h || (checkHour === h && checkMin > m + 15)) {
+            hasLateCheckIn = true;
           }
         }
-      };
+      }
 
-      const fetchTasks = async () => {
+      // Compute visual logic state: green, gray, red, yellow
+      let type: "activo" | "offline" | "atrasado" | "descanso" = "offline";
+      let label = "No logueado";
+      let horaIngreso = "-";
+      let actividad = "Sin registro";
+      let startForElapsed: string | null = null;
+
+      // Filter all logs strictly belonging to today (on local calendar date basis)
+      const logsDeHoy = opLogs.filter((r) => {
+        if (!r.inicio) return false;
         try {
-          let query = supabase.from("tasks").select("*");
-          if (user.rol === "operario") {
-            query = query.or(
-              `created_by_id.eq.${user.id},asignados.cs.{${user.nombre}}`,
-            );
+          const d = new Date(r.inicio);
+          return (
+            d.getFullYear() === yVal &&
+            d.getMonth() === dObj.getMonth() &&
+            d.getDate() === dObj.getDate()
+          );
+        } catch (e) {
+          return false;
+        }
+      });
+
+      // Find the absolute first log of today (earliest log among today's logs)
+      // Since opLogs & logsDeHoy are sorted newest to oldest, the last item is the earliest.
+      const firstLogDeHoy = logsDeHoy[logsDeHoy.length - 1];
+      const firstLogDelDia = firstLogDeHoy || (latestLog && !latestLog.fin ? latestLog : null);
+
+      if (firstLogDelDia) {
+        try {
+          const di = new Date(firstLogDelDia.inicio);
+          horaIngreso = `${String(di.getHours()).padStart(2, "0")}:${String(di.getMinutes()).padStart(2, "0")} hs`;
+        } catch (e) {
+          horaIngreso = "-";
+        }
+      }
+
+      if (latestLog && !latestLog.fin) {
+        // Connected active session
+        startForElapsed = latestLog.inicio;
+
+        if (latestLog.accion?.includes("Descanso")) {
+          type = "descanso";
+          label = "Descanso";
+          actividad = "Descansando / Pausa";
+        } else {
+          if (hasLateCheckIn) {
+            type = "atrasado";
+            label = "Atrasado";
+          } else {
+            type = "activo";
+            label = "Activo";
           }
-          const { data } = await query.order("created_at", {
-            ascending: false,
-          });
-          setTasks(data || []);
-        } catch (error) {
-          console.error(error);
-        }
-      };
 
-      const fetchStock = async () => {
-        try {
-          const { data } = await supabase.from("insumos").select("*");
-          setStock(data || []);
-        } catch (error) {
-          console.error(error);
-        }
-      };
-
-      if (tab === "analitica" || tab === "dashboard") {
-        let query = supabase
-          .from("logs")
-          .select("*")
-          .order("inicio", { ascending: false });
-
-        let startDate = new Date();
-        if (reportDateMode === "vivo") {
-          startDate.setHours(startDate.getHours() - 12);
-          query = query.gte("inicio", startDate.toISOString()).limit(200);
-        } else if (reportDateMode === "dia") {
-          startDate.setHours(0, 0, 0, 0);
-          query = query.gte("inicio", startDate.toISOString());
-        } else if (reportDateMode === "semana") {
-          startDate.setDate(startDate.getDate() - 7);
-          query = query.gte("inicio", startDate.toISOString());
-        } else if (reportDateMode === "mes") {
-          startDate.setMonth(startDate.getMonth() - 1);
-          query = query.gte("inicio", startDate.toISOString());
-        } else if (reportDateMode === "custom" && customStart && customEnd) {
-          const startIso = new Date(customStart + "T00:00:00").toISOString();
-          const endIso = new Date(customEnd + "T23:59:59").toISOString();
-          query = query.gte("inicio", startIso).lte("inicio", endIso);
-        }
-
-        try {
-          const [{ data: logsData }, _ops, _tasks, _stock] = await Promise.all([
-            query,
-            fetchOps(),
-            fetchTasks(),
-            fetchStock(),
-          ]);
-
-          let finalData = logsData || [];
-          if (reportUserFilter !== "Todos") {
-            finalData = finalData.filter(
-              (d) => d.operario_nombre === reportUserFilter,
-            );
+          if (latestLog.accion?.includes("Tarea:")) {
+            actividad = latestLog.accion.replace("Tarea: ", "");
+          } else if (latestLog.accion?.includes("Turno")) {
+            actividad = "Disponible / Guardia";
+          } else {
+            actividad = latestLog.accion || "Turno Activo";
           }
-          setRegistros(finalData);
-        } catch (error) {
-          console.error(error);
         }
       } else {
-        await Promise.all([fetchOps(), fetchTasks(), fetchStock()]);
+        // Offline
+        if (isLateOffline) {
+          type = "atrasado";
+          label = "Atrasado";
+          actividad = "Turno vencido sin fichar";
+        } else {
+          type = "offline";
+          label = "No logueado";
+          actividad = "No logueado";
+        }
       }
-      setLoading(false);
-    }
-    fetchData();
-  }, [tab, reportDateMode, reportUserFilter, customStart, customEnd]);
 
-  // Analytics Helpers
-  const metrics = React.useMemo(() => {
-    if (!registros)
       return {
-        totalMinutes: 0,
-        avgTask: 0,
-        activeNow: 0,
-        assignedTasks: 0,
-        efficacy: 0,
-        totalHours: "0.0",
-        completedTasks: 0,
-        activeOps: 0,
-        totalHoursNum: 0,
+        id: op.id,
+        nombre: op.nombre,
+        loginType: type,
+        loginLabel: label,
+        horaIngreso,
+        actividad,
+        startForElapsed,
+        logsDeHoy,
       };
-    const totalMinutes = registros.reduce(
-      (acc, r) => acc + (r.duracion_minutos || 0),
-      0,
-    );
-    const completedTasksList = registros.filter(
-      (r) =>
-        r.fin &&
-        r.accion &&
-        !r.accion.includes("Turno") &&
-        !r.accion.includes("Descanso") &&
-        !r.accion.startsWith("Inicio") &&
-        !r.accion.startsWith("Fin") &&
-        !r.accion.includes("Sesión"),
-    );
-    const completedTasks = completedTasksList.length;
-    const activeOps = new Set(
-      registros
-        .filter((r) => {
-          const now = new Date();
-          const startTime = new Date(r.inicio);
-          return (
-            !r.fin && now.getTime() - startTime.getTime() < 12 * 60 * 60 * 1000
-          );
-        })
-        .map((r) => r.operario_nombre),
-    ).size;
-
-    const assignedTasks = tasks.length;
-    const efficacy =
-      assignedTasks > 0
-        ? Math.min(100, Math.round((completedTasks / assignedTasks) * 100))
-        : 0;
-
-    return {
-      totalHours: (totalMinutes / 60).toFixed(1),
-      totalHoursNum: totalMinutes / 60,
-      completedTasks,
-      activeOps,
-      avgTask:
-        completedTasks > 0 ? (totalMinutes / completedTasks).toFixed(0) : 0,
-      assignedTasks,
-      efficacy,
-    };
-  }, [registros, tasks]);
-
-  const generatePDFReport = () => {
-    const doc = new jsPDF() as any;
-    const today = getArgentinaDate();
-
-    // Header
-    doc.setFontSize(22);
-    doc.setTextColor(30, 41, 59); // slate-800
-    doc.text("Reporte Diario de Limpieza", 14, 22);
-
-    doc.setFontSize(10);
-    doc.setTextColor(100, 116, 139); // slate-400
-    doc.text(`Fecha: ${today}`, 14, 28);
-    doc.text(`Supervisor: ${user.nombre}`, 14, 33);
-
-    // Summary Cards
-    doc.setDrawColor(226, 232, 240); // slate-200
-    doc.setFillColor(248, 250, 252); // slate-50
-    doc.roundedRect(14, 40, 42, 25, 3, 3, "FD");
-    doc.roundedRect(60, 40, 42, 25, 3, 3, "FD");
-    doc.roundedRect(106, 40, 42, 25, 3, 3, "FD");
-    doc.roundedRect(152, 40, 42, 25, 3, 3, "FD");
-
-    doc.setFontSize(8);
-    doc.setTextColor(100, 116, 139);
-    doc.text("TAREAS ASIGNADAS", 16, 46);
-    doc.text("TAREAS REALIZADAS", 62, 46);
-    doc.text("EFICACIA", 108, 46);
-    doc.text("HORAS TOTALES", 154, 46);
-
-    doc.setFontSize(14);
-    doc.setTextColor(30, 41, 59);
-    doc.text(metrics.assignedTasks.toString(), 16, 56);
-    doc.text(metrics.completedTasks.toString(), 62, 56);
-    doc.text(`${metrics.efficacy}%`, 108, 56);
-    doc.text(`${metrics.totalHours}h`, 154, 56);
-
-    // Detailed Table
-    const tableData = registros.map((r) => [
-      r.operario_nombre,
-      r.accion,
-      formatArgTime(r.inicio),
-      r.fin ? formatArgTime(r.fin) : "En proceso",
-      `${r.duracion_minutos || 0} min`,
-    ]);
-
-    doc.autoTable({
-      startY: 75,
-      head: [["Operario", "Actividad", "Inicio", "Fin", "Duración"]],
-      body: tableData,
-      headStyles: {
-        fillColor: [59, 130, 246],
-        textColor: 255,
-        fontSize: 10,
-        fontStyle: "bold",
-      },
-      bodyStyles: { fontSize: 9, textColor: 51 },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
-      margin: { top: 75 },
     });
+  }, [operarios, registros, nowTime]);
 
-    doc.save(`Reporte_Limpieza_${today.replace(/\//g, "-")}.pdf`);
+  const getElapsedString = (startIso: string | null) => {
+    if (!startIso) return "-";
+    const gapMs = nowTime - new Date(startIso).getTime();
+    if (gapMs < 0) return "0s";
+
+    const secs = Math.floor(gapMs / 1000);
+    const mins = Math.floor(secs / 60);
+    const hrs = Math.floor(mins / 60);
+
+    const remSecs = secs % 60;
+    const remMins = mins % 60;
+
+    let str = "";
+    if (hrs > 0) {
+      str += `${hrs}h `;
+    }
+    if (mins > 0 || hrs > 0) {
+      str += `${remMins}m `;
+    }
+    str += `${remSecs}s`;
+    return str;
   };
 
-  if (showReport) {
-    return (
-      <DailyReportScreen
-        operarios={operarios}
-        registros={registros}
-        tasks={tasks}
-        supervisorName={user.nombre}
-        onBack={() => setShowReport(false)}
-      />
-    );
-  }
+
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-800">
-      <PWAHelpModal
-        isOpen={showPWAHelp}
-        onClose={() => setShowPWAHelp(false)}
-        installProps={installProps}
-      />
-
-      {/* SIDE MENU OVERLAY (SUPERVISOR) */}
-      <AnimatePresence>
-        {menuOpen && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setMenuOpen(false)}
-              className="fixed inset-0 bg-slate-900/40 backdrop-blur-[2px] z-[90]"
-            />
-            <motion.div
-              initial={{ x: -300 }}
-              animate={{ x: 0 }}
-              exit={{ x: -300 }}
-              transition={{ type: "spring", damping: 30, stiffness: 300 }}
-              className="fixed top-0 left-0 bottom-0 w-[300px] bg-white z-[100] shadow-2xl flex flex-col p-8"
-            >
-              <div className="flex justify-between items-center mb-10">
-                <div className="flex items-center gap-3">
-                  <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center border border-slate-100 overflow-hidden p-1">
-                    <img
-                      src="/logo.png"
-                      alt="Logo"
-                      className="w-full h-full object-contain"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).src =
-                          "https://cdn-icons-png.flaticon.com/512/3649/3649255.png";
-                      }}
-                    />
-                  </div>
-                  <span className="font-bold text-xl tracking-tight text-brand-blue">
-                    Panel Arévalo
-                  </span>
-                </div>
-                <button
-                  onClick={() => setMenuOpen(false)}
-                  className="p-2 hover:bg-slate-100 rounded-full text-slate-400"
-                >
-                  <X className="w-6 h-6" />
-                </button>
-              </div>
-
-              <nav className="flex flex-col gap-2">
-                <button
-                  onClick={() => {
-                    setTab("dashboard");
-                    setMenuOpen(false);
-                  }}
-                  className={cn(
-                    "flex items-center gap-4 px-5 py-3.5 rounded-2xl font-bold transition-all",
-                    tab === "dashboard"
-                      ? "bg-blue-600 text-white shadow-lg shadow-blue-100"
-                      : "text-slate-500 hover:bg-slate-50",
-                  )}
-                >
-                  <ShieldAlert className="w-6 h-6" />
-                  <span>Panel General</span>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setTab("gestion");
-                    setSubTab("tareas");
-                    setMenuOpen(false);
-                  }}
-                  className={cn(
-                    "flex items-center gap-4 px-5 py-3.5 rounded-2xl font-bold transition-all",
-                    tab === "gestion"
-                      ? "bg-blue-600 text-white shadow-lg shadow-blue-100"
-                      : "text-slate-500 hover:bg-slate-50",
-                  )}
-                >
-                  <ClipboardList className="w-6 h-6" />
-                  <span>Gestión Operativa</span>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setTab("incidencias");
-                    setMenuOpen(false);
-                  }}
-                  className={cn(
-                    "flex items-center gap-4 px-5 py-3.5 rounded-2xl font-bold transition-all",
-                    tab === "incidencias"
-                      ? "bg-rose-600 text-white shadow-lg shadow-rose-100"
-                      : "text-slate-500 hover:bg-slate-50",
-                  )}
-                >
-                  <AlertTriangle className="w-6 h-6" />
-                  <span>Incidencias</span>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setTab("analitica");
-                    setSubTab("diario");
-                    setMenuOpen(false);
-                  }}
-                  className={cn(
-                    "flex items-center gap-4 px-5 py-3.5 rounded-2xl font-bold transition-all",
-                    tab === "analitica"
-                      ? "bg-blue-600 text-white shadow-lg shadow-blue-100"
-                      : "text-slate-500 hover:bg-slate-50",
-                  )}
-                >
-                  <BarChart2 className="w-6 h-6" />
-                  <span>Reportes y Analítica</span>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setTab("config");
-                    setSubTab("anuncios");
-                    setMenuOpen(false);
-                  }}
-                  className={cn(
-                    "flex items-center gap-4 px-5 py-3.5 rounded-2xl font-bold transition-all",
-                    tab === "config"
-                      ? "bg-blue-600 text-white shadow-lg shadow-blue-100"
-                      : "text-slate-500 hover:bg-slate-50",
-                  )}
-                >
-                  <Settings className="w-6 h-6" />
-                  <span>Configuración</span>
-                </button>
-
-                <div className="my-6 border-t border-slate-100" />
-
-                <button
-                  onClick={handleLogoutAdmin}
-                  className="flex items-center gap-4 px-5 py-4 rounded-2xl font-bold text-rose-500 hover:bg-rose-50 transition-all"
-                >
-                  <LogOut className="w-6 h-6" />
-                  <span>Cerrar Sesión</span>
-                </button>
-              </nav>
-
-              <div className="mt-auto p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold">
-                    {user.nombre.charAt(0)}
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-slate-800 leading-tight">
-                      {user.nombre}
-                    </p>
-                    <p className="text-[10px] uppercase tracking-widest text-blue-500 font-bold">
-                      {user.rol}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-
-      <header className="bg-brand-blue text-white px-6 py-4 flex justify-between items-center z-50 sticky top-0 shadow-sm border-b border-white/10">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setMenuOpen(true)}
-            className="p-2.5 bg-white/10 text-white hover:text-blue-100 hover:bg-white/20 rounded-2xl transition-all border border-white/5"
-          >
-            <Menu className="w-6 h-6" />
-          </button>
+      {/* MINIMAL DESIGNER HEADER */}
+      <header className="bg-white border-b border-slate-100 px-6 py-4 flex justify-between items-center sticky top-0 z-50 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center p-1.5 text-white font-black text-lg shadow-md shadow-blue-100">
+            A
+          </div>
+          <div>
+            <h1 className="font-black text-base text-slate-900 tracking-tight leading-tight">
+              Arévalo Servicios
+            </h1>
+            <p className="text-[10px] text-emerald-500 font-bold uppercase tracking-wider flex items-center gap-1">
+              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
+              Monitoreo en Vivo Activo
+            </p>
+          </div>
         </div>
 
-        <div className="flex items-center gap-3 text-right">
-          <div className="hidden xs:block">
-            <h2 className="text-sm font-bold text-white leading-tight truncate max-w-[150px]">
+        <div className="flex items-center gap-4">
+          <div className="text-right hidden sm:block">
+            <span className="text-xs font-black uppercase text-slate-400 block tracking-widest">
+              SUPERVISOR
+            </span>
+            <span className="text-sm font-bold text-slate-700 block text-right">
               {user.nombre}
-            </h2>
+            </span>
           </div>
+
           <button
-            onClick={handleLogoutAdmin}
-            className="bg-transparent p-2 rounded-2xl border border-transparent text-white hover:bg-white/10 transition-colors"
-            title="Cerrar Sesión"
+            onClick={onLogout}
+            className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 text-slate-600 hover:bg-rose-50 hover:text-rose-600 font-black text-[11px] uppercase tracking-wider rounded-2xl transition-all border border-transparent hover:border-rose-100"
           >
-            <LogOut className="w-6 h-6" />
+            <LogOut className="w-4 h-4" />
+            Cerrar Sesión
           </button>
         </div>
       </header>
 
-      <div className="p-4 sm:p-8 flex-1 max-w-5xl mx-auto w-full flex flex-col gap-6">
-        {/* TAB CONTENT (Controlled by Sidebar Menu) */}
-        {tab === "dashboard" && (
-          <div className="flex flex-col gap-6">
-            {/* KPI ROW */}
-            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-              <KPICard
-                title="Tareas Asignadas"
-                value={metrics.assignedTasks}
-                icon={<ClipboardList className="w-5 h-5 text-blue-500" />}
-                trend="Total"
-              />
-              <KPICard
-                title="Tareas Realizadas"
-                value={metrics.completedTasks}
-                icon={<CheckCircle2 className="w-5 h-5 text-emerald-500" />}
-                trend="Hoy"
-              />
-              <KPICard
-                title="Eficacia"
-                value={metrics.efficacy + "%"}
-                icon={<Activity className="w-5 h-5 text-indigo-500" />}
-                sub="Completadas vs Asignadas"
-              />
-              <KPICard
-                title="Personal Activo"
-                value={metrics.activeOps}
-                icon={<UserCircle className="w-5 h-5 text-amber-500" />}
-                trend="Vivo"
-              />
+      {/* CORE LIVE CONTAINER */}
+      <main className="p-4 sm:p-8 flex-1 max-w-5xl mx-auto w-full flex flex-col gap-6">
+        {/* TITLE AND LEGEND CARD */}
+        <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div>
+            <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+              Estado en Vivo del Personal
+            </h2>
+            <p className="text-xs text-slate-400 font-semibold mt-1">
+              Visualización unificada de tiempo de trabajo, actividades en curso y descansos del equipo de Arévalo Servicios.
+            </p>
+          </div>
 
-              <button
-                onClick={() => setShowReport(true)}
-                className="bg-slate-900 border border-slate-800 p-4 rounded-3xl flex flex-col justify-between hover:bg-slate-800 transition-all text-left shadow-xl shadow-slate-200 group"
-              >
-                <div className="flex justify-between items-start mb-2">
-                  <div className="p-2 bg-blue-500/20 rounded-xl text-blue-400 group-hover:bg-blue-500 group-hover:text-white transition-all">
-                    <Download className="w-5 h-5" />
-                  </div>
-                </div>
-                <div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
-                    Descargar PDF
-                  </p>
-                  <p className="text-sm font-bold text-white uppercase tracking-tight">
-                    Reporte Diario
-                  </p>
-                </div>
-              </button>
+          {/* STATUS COLOR LEGEND */}
+          <div className="flex flex-wrap gap-3 p-3 bg-slate-50 border border-slate-100 rounded-2xl w-full md:w-auto">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
+              <span className="w-3 h-3 bg-emerald-500 rounded-full border-2 border-white shadow shadow-emerald-200" />
+              <span>Activo</span>
             </div>
-
-            <OperarioStatusGrid operarios={operarios} registros={registros} />
-
-            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm mb-6">
-              <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                <Plus className="w-5 h-5 text-rose-500" /> Alertas Críticas
-                (Insumos Escasos)
-              </h3>
-              <div className="space-y-3">
-                {stock
-                  .filter((s) => s.stock < 5)
-                  .map((s) => (
-                    <div
-                      key={s.id}
-                      className="flex items-center justify-between p-3 bg-rose-50 rounded-xl border border-rose-100"
-                    >
-                      <span className="text-sm font-bold text-slate-700">
-                        {s.nombre}
-                      </span>
-                      <span className="text-xs font-black text-rose-600 bg-white px-2 py-1 rounded-lg border border-rose-100">
-                        Stock: {s.stock}
-                      </span>
-                    </div>
-                  ))}
-                {stock.filter((s) => s.stock < 5).length === 0 && (
-                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 flex flex-col items-center justify-center text-center">
-                    <CheckCircle2 className="w-8 h-8 text-emerald-400 mb-2" />
-                    <p className="text-slate-400 text-xs font-bold uppercase tracking-widest">
-                      Sin alertas detectadas.
-                    </p>
-                  </div>
-                )}
-              </div>
+            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
+              <span className="w-3 h-3 bg-amber-400 rounded-full border-2 border-white shadow shadow-amber-200" />
+              <span>Descanso</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
+              <span className="w-3 h-3 bg-rose-500 rounded-full border-2 border-white shadow shadow-rose-200 animate-pulse" />
+              <span>Atrasado</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
+              <span className="w-3 h-3 bg-slate-300 rounded-full border-2 border-white shadow shadow-slate-100" />
+              <span>No logueado</span>
             </div>
           </div>
-        )}
+        </div>
 
-        {tab === "gestion" && (
-          <div className="flex flex-col gap-6">
-            <div className="bg-white p-1.5 rounded-2xl border border-slate-200 flex gap-2 w-full max-w-md mx-auto sticky top-20 z-40 shadow-sm">
-              {["tareas", "turnos", "stock"].map((st) => (
-                <button
-                  key={st}
-                  onClick={() => setSubTab(st)}
-                  className={cn(
-                    "flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all",
-                    subTab === st
-                      ? "bg-blue-600 text-white shadow-lg"
-                      : "text-slate-400 hover:bg-slate-50",
-                  )}
-                >
-                  {st}
-                </button>
-              ))}
-            </div>
-            {subTab === "tareas" && (
-              <SupervisorTasksManager
-                user={user}
-                googleUser={googleUser}
-                googleToken={googleToken}
-                onLinkGoogle={onLinkGoogle}
-                onUnlinkGoogle={onUnlinkGoogle}
-              />
-            )}
-            {subTab === "turnos" && <SupervisorShiftManager />}
-            {subTab === "stock" && <SupervisorStockManager />}
+        {/* LOADING & DATA DISPLAY */}
+        {loading ? (
+          <div className="bg-white rounded-3xl border border-slate-200 p-16 flex flex-col items-center justify-center text-center shadow-sm">
+            <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4" />
+            <p className="text-xs font-black uppercase text-slate-400 tracking-widest">
+              Sincronizando estados en vivo...
+            </p>
           </div>
-        )}
-
-        {tab === "analitica" && (
-          <div className="flex flex-col gap-6">
-            <div className="bg-white p-1.5 rounded-2xl border border-slate-200 flex gap-2 w-full max-w-md mx-auto sticky top-20 z-40 shadow-sm">
-              {["diario", "historico", "productividad"].map((st) => (
-                <button
-                  key={st}
-                  onClick={() => setSubTab(st)}
-                  className={cn(
-                    "flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all",
-                    subTab === st
-                      ? "bg-blue-600 text-white shadow-lg"
-                      : "text-slate-400 hover:bg-slate-50",
-                  )}
-                >
-                  {st}
-                </button>
-              ))}
-            </div>
-            {subTab === "diario" && (
-              <DailySupervisorReport
-                registros={registros}
-                operarios={operarios}
-                tasks={tasks}
-                reportDateMode={reportDateMode}
-                setReportDateMode={setReportDateMode}
-                customStart={customStart}
-                setCustomStart={setCustomStart}
-                customEnd={customEnd}
-                setCustomEnd={setCustomEnd}
-              />
-            )}
-            {subTab === "historico" && (
-              <JibbleHourReport
-                registros={registros}
-                operarios={operarios}
-                reportDateMode={reportDateMode}
-                setReportDateMode={setReportDateMode}
-                reportUserFilter={reportUserFilter}
-                setReportUserFilter={setReportUserFilter}
-                loading={loading}
-              />
-            )}
-            {subTab === "productividad" && (
-              <SupervisorProductivityStats
-                registros={registros}
-                operarios={operarios}
-                tasks={tasks}
-              />
-            )}
-          </div>
-        )}
-
-        {tab === "config" && (
-          <div className="flex flex-col gap-6">
-            <div className="bg-white p-1.5 rounded-2xl border border-slate-200 flex gap-2 w-full max-w-md mx-auto sticky top-20 z-40 shadow-sm overflow-x-auto">
-              {["anuncios", "personal", "ubicacion", "perfil"].map((st) => (
-                <button
-                  key={st}
-                  onClick={() => setSubTab(st)}
-                  className={cn(
-                    "flex-1 py-3 px-4 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap",
-                    subTab === st
-                      ? "bg-blue-600 text-white shadow-lg"
-                      : "text-slate-400 hover:bg-slate-50",
-                  )}
-                >
-                  {st}
-                </button>
-              ))}
-            </div>
-            {subTab === "anuncios" && <SupervisorAnnouncements />}
-            {subTab === "personal" && <PersonalManagement />}
-            {subTab === "ubicacion" && (
-              <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-xl max-w-2xl mx-auto w-full">
-                <h3 className="text-lg font-black text-slate-800 mb-6 flex items-center gap-3">
-                  <MapPin className="w-6 h-6 text-blue-500" /> Perímetro de
-                  Trabajo
-                </h3>
-                <p className="text-xs text-slate-500 font-medium mb-6 leading-relaxed">
-                  Establece el punto central donde los operarios deben estar
-                  para poder iniciar su jornada. Los ingresos se bloquearán si
-                  están a más de 300 metros de este punto.
-                </p>
-
-                <div className="space-y-6">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                      <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">
-                        Latitud Objetivo
-                      </span>
-                      <span className="text-sm font-bold text-slate-700 font-mono">
-                        {targetCoords?.lat.toFixed(6) || "No definida"}
-                      </span>
-                    </div>
-                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                      <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">
-                        Longitud Objetivo
-                      </span>
-                      <span className="text-sm font-bold text-slate-700 font-mono">
-                        {targetCoords?.lng.toFixed(6) || "No definida"}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-3">
-                    <button
-                      onClick={() => {
-                        if (currentCoords) {
-                          setTargetCoords(currentCoords);
-                          alert(
-                            "Ubicación objetivo actualizada a tu posición actual.",
-                          );
-                        } else {
-                          alert(
-                            "No se detecta tu ubicación actual. Asegúrate de tener el GPS activado.",
-                          );
-                        }
-                      }}
-                      className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-slate-200 hover:bg-slate-800 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
-                    >
-                      <MapPin className="w-4 h-4" /> USAR MI UBICACIÓN ACTUAL
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        if (
-                          confirm("¿Seguro que deseas eliminar el bloqueo GPS?")
-                        ) {
-                          setTargetCoords(null);
-                        }
-                      }}
-                      className="w-full py-4 bg-white text-rose-500 border-2 border-rose-100 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-rose-50 transition-all"
-                    >
-                      ELIMINAR BLOQUEO GPS
-                    </button>
-                  </div>
-
-                  {targetCoords && currentCoords && (
-                    <div className="mt-6 p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <Activity className="w-5 h-5 text-blue-500" />
-                        <div>
-                          <p className="text-[10px] font-black text-blue-600 uppercase">
-                            Distancia Actual
-                          </p>
-                          <p className="text-sm font-bold text-slate-700">
-                            {Math.round(
-                              calculateDistance(
-                                currentCoords.lat,
-                                currentCoords.lng,
-                                targetCoords.lat,
-                                targetCoords.lng,
-                              ),
-                            )}{" "}
-                            metros
-                          </p>
-                        </div>
-                      </div>
-                      <div
+        ) : (
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+            {/* DESKTOP TABLE VIEW */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest w-[12%] text-center">
+                      Logueo
+                    </th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest w-[25%]">
+                      Nombre del Operario
+                    </th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest w-[18%] text-center">
+                      Ingreso
+                    </th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest w-[30%]">
+                      Actividad Actual
+                    </th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest w-[15%] text-right pr-8">
+                      Duración
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {operariosEstadoEnVivo.map((op) => (
+                    <React.Fragment key={op.id}>
+                      <tr
+                        onClick={() => setSelectedOperarioId(selectedOperarioId === op.id ? null : op.id)}
                         className={cn(
-                          "px-3 py-1 rounded-full text-[10px] font-black uppercase",
-                          calculateDistance(
-                            currentCoords.lat,
-                            currentCoords.lng,
-                            targetCoords.lat,
-                            targetCoords.lng,
-                          ) <= 300
-                            ? "bg-emerald-100 text-emerald-600"
-                            : "bg-rose-100 text-rose-600",
+                          "cursor-pointer hover:bg-blue-50/30 transition-all group select-none",
+                          selectedOperarioId === op.id && "bg-blue-50/20"
                         )}
                       >
-                        {calculateDistance(
-                          currentCoords.lat,
-                          currentCoords.lng,
-                          targetCoords.lat,
-                          targetCoords.lng,
-                        ) <= 300
-                          ? "Dentro del radio"
-                          : "Fuera de radio"}
+                        {/* 1. ICONO DE LOGUE */}
+                        <td className="px-6 py-5 text-center">
+                          <div className="inline-flex justify-center items-center">
+                            <span
+                              className={cn(
+                                "w-5 h-5 rounded-full border-4 border-white shadow-md flex items-center justify-center transition-all",
+                                op.loginType === "activo" && "bg-emerald-500 shadow-emerald-100",
+                                op.loginType === "descanso" && "bg-amber-400 shadow-amber-100",
+                                op.loginType === "atrasado" && "bg-rose-500 shadow-rose-100 animate-pulse",
+                                op.loginType === "offline" && "bg-slate-300"
+                              )}
+                              title={op.loginLabel}
+                            />
+                          </div>
+                        </td>
+
+                        {/* 2. NOMBRE DEL OPERARIO */}
+                        <td className="px-6 py-5">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-bold text-xs flex items-center justify-center uppercase">
+                                {op.nombre ? op.nombre.substring(0, 2) : "OP"}
+                              </div>
+                              <div>
+                                <span className="text-sm font-bold text-slate-800 block">
+                                  {op.nombre}
+                                </span>
+                                {op.loginType === "atrasado" && (
+                                  <span className="inline-block bg-rose-50 text-rose-600 text-[8px] font-black px-1.5 py-0.5 rounded uppercase mt-0.5 tracking-wider border border-rose-100 font-sans">
+                                    Alerta de Retraso
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-slate-400 group-hover:text-blue-600 transition-colors bg-slate-50 p-1 rounded-lg border border-slate-100/50">
+                              {selectedOperarioId === op.id ? (
+                                <ChevronDown className="w-4 h-4" />
+                              ) : (
+                                <ChevronRight className="w-4 h-4" />
+                              )}
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* 3. INGRESO (HORA DE INICIO) */}
+                        <td className="px-6 py-5 text-center">
+                          <span className="text-xs font-mono font-bold text-slate-600 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-100">
+                            {op.horaIngreso}
+                          </span>
+                        </td>
+
+                        {/* 4. ACTIVIDAD ACTUAL */}
+                        <td className="px-6 py-5">
+                          <div className="flex flex-col">
+                            <span className="text-xs font-bold text-slate-700 leading-normal">
+                              {op.actividad}
+                            </span>
+                            {op.loginType === "activo" && (
+                              <span className="text-[10px] font-semibold text-emerald-500 flex items-center gap-1 mt-0.5">
+                                ● En línea
+                              </span>
+                            )}
+                            {op.loginType === "descanso" && (
+                              <span className="text-[10px] font-semibold text-amber-500 flex items-center gap-1 mt-0.5">
+                                ● En receso
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* 5. DURACIÓN */}
+                        <td className="px-6 py-5 text-right pr-8">
+                          <span className="text-xs font-mono font-bold text-slate-500 block">
+                            {getElapsedString(op.startForElapsed)}
+                          </span>
+                        </td>
+                      </tr>
+
+                      {/* DETALLE DE ACTIVIDADES DE HOY EXPANDIDO */}
+                      {selectedOperarioId === op.id && (
+                        <tr className="bg-slate-50/30">
+                          <td colSpan={5} className="px-8 py-5 border-l-4 border-l-blue-600">
+                            <div className="flex items-center gap-2 mb-3 text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                              <History className="w-4 h-4 text-blue-500" />
+                              <span>Actividades completadas hoy ({op.nombre})</span>
+                            </div>
+
+                            {op.logsDeHoy && op.logsDeHoy.length > 0 ? (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-4xl">
+                                {op.logsDeHoy.map((log: any, idx: number) => {
+                                  let startFormatted = "--:--";
+                                  let endFormatted = "En curso";
+                                  let diffFormatted = "";
+
+                                  try {
+                                    if (log.inicio) {
+                                      const dStart = new Date(log.inicio);
+                                      startFormatted = `${String(dStart.getHours()).padStart(2, "0")}:${String(dStart.getMinutes()).padStart(2, "0")}`;
+                                      
+                                      const finMs = log.fin ? new Date(log.fin).getTime() : Date.now();
+                                      const diffMs = finMs - dStart.getTime();
+                                      if (diffMs > 0) {
+                                        const mins = Math.floor(diffMs / 60000);
+                                        const hrs = Math.floor(mins / 60);
+                                        const remMins = mins % 60;
+                                        diffFormatted = hrs > 0 ? `${hrs}h ${remMins}m` : `${remMins}m`;
+                                      } else {
+                                        diffFormatted = "0m";
+                                      }
+                                    }
+                                    if (log.fin) {
+                                      const dEnd = new Date(log.fin);
+                                      endFormatted = `${String(dEnd.getHours()).padStart(2, "0")}:${String(dEnd.getMinutes()).padStart(2, "0")}`;
+                                    }
+                                  } catch (err) {
+                                    console.error(err);
+                                  }
+
+                                  const isBreak = log.accion?.includes("Descanso") || log.accion?.includes("Almuerzo");
+                                  const isCheckIn = log.accion?.includes("Turno") || log.accion?.includes("Sesión") || log.accion?.includes("Jornada");
+
+                                  return (
+                                    <div
+                                      key={log.id || idx}
+                                      className="flex flex-col gap-2 p-3 bg-white rounded-2xl border border-slate-100 shadow-sm hover:border-slate-200 transition-all"
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2">
+                                          <div className={cn(
+                                            "w-2 h-2 rounded-full",
+                                            isBreak ? "bg-amber-400" : (isCheckIn ? "bg-emerald-500" : "bg-blue-500")
+                                          )} />
+                                          <span className="text-xs font-bold text-slate-700">
+                                            {log.accion?.includes("Tarea:") ? log.accion.replace("Tarea: ", "") : log.accion}
+                                          </span>
+                                        </div>
+                                        <span className={cn(
+                                          "text-[9px] font-black px-2 py-0.5 rounded border font-sans",
+                                          log.fin ? "bg-slate-50 text-slate-500 border-slate-100" : "bg-emerald-50 text-emerald-600 border-emerald-100 animate-pulse"
+                                        )}>
+                                          {diffFormatted || "0m"}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center justify-between pl-4 text-slate-500">
+                                        <span className="text-[10px] font-bold font-mono">
+                                          ⏱️ {startFormatted} - {endFormatted}
+                                        </span>
+                                      </div>
+                                      {log.comentario && (
+                                        <div className="ml-4 text-[10px] text-slate-500 italic bg-amber-50/40 p-2 rounded-xl border border-amber-100/50 leading-snug">
+                                          "{log.comentario}"
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="text-slate-400 text-xs font-semibold p-4 bg-slate-50 rounded-2xl border border-slate-100 w-fit">
+                                Sin actividades registradas el día de hoy.
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  ))}
+
+                  {operariosEstadoEnVivo.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="py-12 text-center text-slate-400 font-bold text-xs uppercase tracking-widest">
+                        Ningún operario registrado
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* MOBILE CARDS VIEW */}
+            <div className="md:hidden flex flex-col divide-y divide-slate-100">
+              {operariosEstadoEnVivo.map((op) => (
+                <div
+                  key={op.id}
+                  onClick={() => setSelectedOperarioId(selectedOperarioId === op.id ? null : op.id)}
+                  className={cn(
+                    "p-5 flex flex-col gap-4 hover:bg-slate-50/50 transition-all cursor-pointer select-none",
+                    selectedOperarioId === op.id ? "bg-slate-50/80" : ""
+                  )}
+                >
+                  <div className="flex justify-between items-start gap-4">
+                    {/* Operario & Status */}
+                    <div className="flex items-center gap-3">
+                      {/* 1. ICONO DE LOGUE (MOBILE) */}
+                      <span
+                        className={cn(
+                          "w-4 h-4 rounded-full border-2 border-white shadow-sm block flex-shrink-0",
+                          op.loginType === "activo" && "bg-emerald-500 shadow-emerald-100",
+                          op.loginType === "descanso" && "bg-amber-400 shadow-amber-100",
+                          op.loginType === "atrasado" && "bg-rose-500 shadow-rose-100 animate-pulse",
+                          op.loginType === "offline" && "bg-slate-300"
+                        )}
+                        title={op.loginLabel}
+                      />
+
+                      {/* 2. NOMBRE DEL OPERARIO */}
+                      <div>
+                        <h4 className="text-sm font-bold text-slate-800 leading-tight flex items-center gap-1.5">
+                          {op.nombre}
+                          <span className="text-slate-400">
+                            {selectedOperarioId === op.id ? (
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            ) : (
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            )}
+                          </span>
+                        </h4>
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mt-0.5">
+                          {op.loginLabel}
+                        </span>
                       </div>
+                    </div>
+
+                    {/* 5. DURACIÓN (MOBILE) */}
+                    <div className="text-right">
+                      <span className="text-[10px] font-black text-slate-400 uppercase block tracking-wider mb-0.5">
+                        DURACIÓN
+                      </span>
+                      <span className="text-xs font-mono font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md">
+                        {getElapsedString(op.startForElapsed)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Highlights Grid */}
+                  <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                    <div>
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-0.5">
+                        3. INGRESO
+                      </span>
+                      <span className="text-xs font-bold text-slate-700 font-mono">
+                        {op.horaIngreso}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-0.5">
+                        4. ACTIVIDAD ACTUAL
+                      </span>
+                      <span className="text-xs font-bold text-slate-700 truncate block max-w-[150px]" title={op.actividad}>
+                        {op.actividad}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* EXPANDED ACTIVITY HISTORY FOR MOBILE */}
+                  {selectedOperarioId === op.id && (
+                    <div className="mt-2 pt-4 border-t border-slate-100 select-none">
+                      <div className="text-[9px] font-black uppercase text-slate-400 tracking-widest mb-3 flex items-center gap-1.5">
+                        <History className="w-3.5 h-3.5 text-blue-500" />
+                        <span>Historial de Actividades de Hoy</span>
+                      </div>
+
+                      {op.logsDeHoy && op.logsDeHoy.length > 0 ? (
+                        <div className="flex flex-col gap-2.5 pl-3 border-l-2 border-slate-200">
+                          {op.logsDeHoy.map((log: any, idx: number) => {
+                            let startFormatted = "--:--";
+                            let endFormatted = "En curso";
+                            let diffFormatted = "";
+
+                            try {
+                              if (log.inicio) {
+                                const dStart = new Date(log.inicio);
+                                startFormatted = `${String(dStart.getHours()).padStart(2, "0")}:${String(dStart.getMinutes()).padStart(2, "0")}`;
+                                
+                                const finMs = log.fin ? new Date(log.fin).getTime() : Date.now();
+                                const diffMs = finMs - dStart.getTime();
+                                if (diffMs > 0) {
+                                  const mins = Math.floor(diffMs / 60000);
+                                  const hrs = Math.floor(mins / 60);
+                                  const remMins = mins % 60;
+                                  diffFormatted = hrs > 0 ? `${hrs}h ${remMins}m` : `${remMins}m`;
+                                } else {
+                                  diffFormatted = "0m";
+                                }
+                              }
+                              if (log.fin) {
+                                const dEnd = new Date(log.fin);
+                                endFormatted = `${String(dEnd.getHours()).padStart(2, "0")}:${String(dEnd.getMinutes()).padStart(2, "0")}`;
+                              }
+                            } catch (err) {
+                              console.error(err);
+                            }
+
+                            const isBreak = log.accion?.includes("Descanso") || log.accion?.includes("Almuerzo");
+                            const isCheckIn = log.accion?.includes("Turno") || log.accion?.includes("Sesión") || log.accion?.includes("Jornada");
+
+                            return (
+                              <div key={log.id || idx} className="flex flex-col gap-1.5 p-2 bg-white rounded-xl border border-slate-200/60 shadow-sm">
+                                <div className="flex justify-between items-start gap-2">
+                                  <div className="flex items-start gap-1.5">
+                                    <div className={cn(
+                                      "w-2 h-2 rounded-full mt-1.5 flex-shrink-0",
+                                      isBreak ? "bg-amber-400" : (isCheckIn ? "bg-emerald-500" : "bg-blue-500")
+                                    )} />
+                                    <span className="text-xs font-bold text-slate-700 leading-tight">
+                                      {log.accion?.includes("Tarea:") ? log.accion.replace("Tarea: ", "") : log.accion}
+                                    </span>
+                                  </div>
+                                  <span className={cn(
+                                    "text-[9px] font-black px-1.5 py-0.5 rounded border font-sans",
+                                    log.fin ? "bg-slate-50 text-slate-500 border-slate-100" : "bg-emerald-50 text-emerald-600 border-emerald-100 animate-pulse"
+                                  )}>
+                                    {diffFormatted || "0m"}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center pl-3.5">
+                                  <span className="text-[10px] font-bold text-slate-500 font-mono">
+                                    ⏱️ {startFormatted} - {endFormatted}
+                                  </span>
+                                </div>
+                                {log.comentario && (
+                                  <p className="text-[10px] text-slate-500 italic ml-3.5 bg-amber-50/20 p-1.5 rounded-lg border border-amber-100/30">
+                                    "{log.comentario}"
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="text-slate-400 text-xs font-semibold py-2">
+                          Sin actividades registradas el día de hoy.
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-              </div>
-            )}
-            {subTab === "perfil" && (
-              <UserProfile
-                user={user}
-                onUpdate={onUserUpdate}
-                googleUser={googleUser}
-                googleToken={googleToken}
-                onLink={onLinkGoogle}
-                onUnlink={onUnlinkGoogle}
-              />
-            )}
+              ))}
+
+              {operariosEstadoEnVivo.length === 0 && (
+                <div className="py-12 text-center text-slate-400 font-bold text-xs uppercase tracking-widest">
+                  Ningún operario registrado
+                </div>
+              )}
+            </div>
           </div>
         )}
-      </div>
+      </main>
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
