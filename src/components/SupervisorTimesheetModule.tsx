@@ -48,15 +48,102 @@ export function SupervisorTimesheetModule({
   customEnd: parentCustomEnd,
   setCustomEnd: setParentCustomEnd,
 }: any) {
-  // Sync state with parent (while keeping fully active and independent controls)
+  // Local operarios list fallback if prop is empty
+  const [dbOperarios, setDbOperarios] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!operarios || operarios.length === 0) {
+      supabase
+        .from("users")
+        .select("*")
+        .eq("rol", "operario")
+        .eq("activo", true)
+        .order("nombre")
+        .then(({ data }) => {
+          if (data && data.length > 0) {
+            setDbOperarios(data);
+          }
+        });
+    }
+  }, [operarios]);
+
+  const activeOperarios = operarios && operarios.length > 0 ? operarios : dbOperarios;
   const [reportDateMode, setReportDateMode] = useState(parentDateMode || "semana");
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
   const [reportUserFilter, setReportUserFilter] = useState("Todos");
 
   // Local tab system inside the Timesheet Module
-  const [activeTab, setActiveTab] = useState<"timesheet" | "absences" | "scheduler">("timesheet");
+  const [activeTab, setActiveTab] = useState<"calendar" | "timesheet" | "absences" | "scheduler">("calendar");
   const [selectedOperario, setSelectedOperario] = useState<string | null>(null);
+
+  // Navigation Offsets State
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [monthOffset, setMonthOffset] = useState(0);
+  const [dayOffset, setDayOffset] = useState(0);
+  const [selectedCellDetail, setSelectedCellDetail] = useState<any | null>(null);
+
+  // Calculate Monday date of offset week
+  const getMondayDate = (offsetWeeks: number) => {
+    const d = new Date();
+    const day = d.getDay();
+    const diffToMonday = day === 0 ? -6 : 1 - day;
+    d.setDate(d.getDate() + diffToMonday + offsetWeeks * 7);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
+
+  // Dynamic days array based on reportDateMode (dia, semana, mes, custom)
+  const displayDays = useMemo(() => {
+    const now = new Date();
+
+    if (reportDateMode === "dia") {
+      const target = new Date();
+      target.setDate(now.getDate() + dayOffset);
+      target.setHours(0, 0, 0, 0);
+      return [target];
+    }
+
+    if (reportDateMode === "mes") {
+      const targetMonthDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+      const year = targetMonthDate.getFullYear();
+      const month = targetMonthDate.getMonth();
+      
+      const totalDaysInMonth = new Date(year, month + 1, 0).getDate();
+      const days: Date[] = [];
+      for (let i = 1; i <= totalDaysInMonth; i++) {
+        days.push(new Date(year, month, i, 0, 0, 0, 0));
+      }
+      return days;
+    }
+
+    if (reportDateMode === "custom" && customStart && customEnd) {
+      const start = new Date(customStart + "T00:00:00");
+      const end = new Date(customEnd + "T23:59:59");
+      const days: Date[] = [];
+      
+      if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && start <= end) {
+        const cur = new Date(start);
+        let count = 0;
+        while (cur <= end && count < 60) {
+          days.push(new Date(cur));
+          cur.setDate(cur.getDate() + 1);
+          count++;
+        }
+        if (days.length > 0) return days;
+      }
+    }
+
+    // Default: "semana"
+    const monday = getMondayDate(weekOffset);
+    const days: Date[] = [];
+    for (let i = 0; i < 7; i++) {
+      const cur = new Date(monday);
+      cur.setDate(monday.getDate() + i);
+      days.push(cur);
+    }
+    return days;
+  }, [reportDateMode, weekOffset, monthOffset, dayOffset, customStart, customEnd]);
 
   // Raw logs loaded from the DB directly to bypass any truncated parent filters
   const [logs, setLogs] = useState<any[]>([]);
@@ -219,22 +306,28 @@ export function SupervisorTimesheetModule({
     let end = new Date();
 
     if (reportDateMode === "dia") {
-      start.setHours(0, 0, 0, 0);
-      end.setHours(23, 59, 59, 999);
+      start = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset, 0, 0, 0, 0);
+      end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset, 23, 59, 59, 999);
     } else if (reportDateMode === "semana") {
-      start.setDate(now.getDate() - 7);
+      const mon = getMondayDate(weekOffset);
+      start = new Date(mon);
       start.setHours(0, 0, 0, 0);
+      end = new Date(mon);
+      end.setDate(mon.getDate() + 6);
+      end.setHours(23, 59, 59, 999);
     } else if (reportDateMode === "mes") {
-      start.setMonth(now.getMonth() - 1);
-      start.setHours(0, 0, 0, 0);
+      const targetMonthDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+      start = new Date(targetMonthDate.getFullYear(), targetMonthDate.getMonth(), 1, 0, 0, 0, 0);
+      const totalDays = new Date(targetMonthDate.getFullYear(), targetMonthDate.getMonth() + 1, 0).getDate();
+      end = new Date(targetMonthDate.getFullYear(), targetMonthDate.getMonth(), totalDays, 23, 59, 59, 999);
     } else if (reportDateMode === "custom" && customStart && customEnd) {
       start = new Date(customStart + "T00:00:00");
       end = new Date(customEnd + "T23:59:59");
-    } else { // "vivo" -> last 24hs
+    } else {
       start.setHours(now.getHours() - 24);
     }
     return { start, end };
-  }, [reportDateMode, customStart, customEnd]);
+  }, [reportDateMode, weekOffset, monthOffset, dayOffset, customStart, customEnd]);
 
   // Add shift action
   const handleAddShift = (e: React.FormEvent) => {
@@ -596,7 +689,7 @@ export function SupervisorTimesheetModule({
               className="w-full bg-white border border-slate-200 text-slate-700 text-xs font-bold rounded-xl px-3 py-2 outline-none h-9 shadow-sm cursor-pointer"
             >
               <option value="Todos">Todos los Operarios</option>
-              {operarios.map((o: any) => (
+              {activeOperarios.map((o: any) => (
                 <option key={o.id} value={o.nombre}>{o.nombre}</option>
               ))}
             </select>
@@ -604,13 +697,25 @@ export function SupervisorTimesheetModule({
         </div>
 
         {/* Local Tab Selection Buttons */}
-        <div className="flex border-b border-slate-100 gap-1 w-full">
+        <div className="flex border-b border-slate-100 gap-1 w-full overflow-x-auto">
+          <button
+            onClick={() => { setActiveTab("calendar"); setSelectedOperario(null); }}
+            className={cn(
+              "px-5 py-3.5 font-bold text-xs tracking-wide transition-all border-b-2 flex items-center gap-2 whitespace-nowrap cursor-pointer",
+              activeTab === "calendar"
+                ? "border-emerald-600 text-emerald-600 font-black"
+                : "border-transparent text-slate-400 hover:text-slate-600"
+            )}
+          >
+            📅 Hoja de Horas (Calendario)
+          </button>
+
           <button
             onClick={() => { setActiveTab("timesheet"); setSelectedOperario(null); }}
             className={cn(
-              "px-5 py-3.5 font-bold text-xs tracking-wide transition-all border-b-2",
+              "px-5 py-3.5 font-bold text-xs tracking-wide transition-all border-b-2 whitespace-nowrap cursor-pointer",
               activeTab === "timesheet"
-                ? "border-blue-600 text-blue-600"
+                ? "border-blue-600 text-blue-600 font-black"
                 : "border-transparent text-slate-400 hover:text-slate-600"
             )}
           >
@@ -620,9 +725,9 @@ export function SupervisorTimesheetModule({
           <button
             onClick={() => { setActiveTab("absences"); setSelectedOperario(null); }}
             className={cn(
-              "px-5 py-3.5 font-bold text-xs tracking-wide transition-all border-b-2 flex items-center gap-1.5",
+              "px-5 py-3.5 font-bold text-xs tracking-wide transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap cursor-pointer",
               activeTab === "absences"
-                ? "border-rose-600 text-rose-600"
+                ? "border-rose-600 text-rose-600 font-black"
                 : "border-transparent text-slate-400 hover:text-slate-600"
             )}
           >
@@ -637,15 +742,499 @@ export function SupervisorTimesheetModule({
           <button
             onClick={() => { setActiveTab("scheduler"); setSelectedOperario(null); }}
             className={cn(
-              "px-5 py-3.5 font-bold text-xs tracking-wide transition-all border-b-2",
+              "px-5 py-3.5 font-bold text-xs tracking-wide transition-all border-b-2 whitespace-nowrap cursor-pointer",
               activeTab === "scheduler"
-                ? "border-indigo-600 text-indigo-600"
+                ? "border-indigo-600 text-indigo-600 font-black"
                 : "border-transparent text-slate-400 hover:text-slate-600"
             )}
           >
             🗓️ Planificar Turnos
           </button>
         </div>
+
+        {/* TAB 0: HOJA DE HORAS - CALENDARIO */}
+        {activeTab === "calendar" && (
+          <div className="flex flex-col gap-5 w-full">
+            {/* Header Navigation Bar */}
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-4 bg-slate-50 border border-slate-200 p-4 rounded-2xl">
+              {reportDateMode === "dia" && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setDayOffset(dayOffset - 1)}
+                      className="px-3 py-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-100 text-slate-700 font-bold text-xs flex items-center gap-1 shadow-2xs cursor-pointer"
+                    >
+                      &larr; Día Anterior
+                    </button>
+                    <button
+                      onClick={() => setDayOffset(0)}
+                      className={cn(
+                        "px-3 py-2 border rounded-xl font-bold text-xs transition-all cursor-pointer shadow-2xs",
+                        dayOffset === 0
+                          ? "bg-blue-600 text-white border-blue-600 font-extrabold"
+                          : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                      )}
+                    >
+                      Hoy
+                    </button>
+                    <button
+                      onClick={() => setDayOffset(dayOffset + 1)}
+                      className="px-3 py-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-100 text-slate-700 font-bold text-xs flex items-center gap-1 shadow-2xs cursor-pointer"
+                    >
+                      Día Siguiente &rarr;
+                    </button>
+                  </div>
+                  <div className="text-center sm:text-right">
+                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest block">
+                      Vista Diaria
+                    </span>
+                    <span className="text-xs font-extrabold text-slate-800">
+                      {displayDays[0]?.getDate()}/{displayDays[0]?.getMonth() + 1}/{displayDays[0]?.getFullYear()}
+                    </span>
+                  </div>
+                </>
+              )}
+
+              {reportDateMode === "semana" && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setWeekOffset(weekOffset - 1)}
+                      className="px-3 py-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-100 text-slate-700 font-bold text-xs flex items-center gap-1 shadow-2xs cursor-pointer"
+                    >
+                      &larr; Semana Anterior
+                    </button>
+                    <button
+                      onClick={() => setWeekOffset(0)}
+                      className={cn(
+                        "px-3 py-2 border rounded-xl font-bold text-xs transition-all cursor-pointer shadow-2xs",
+                        weekOffset === 0
+                          ? "bg-blue-600 text-white border-blue-600 font-extrabold"
+                          : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                      )}
+                    >
+                      Semana Actual
+                    </button>
+                    <button
+                      onClick={() => setWeekOffset(weekOffset + 1)}
+                      className="px-3 py-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-100 text-slate-700 font-bold text-xs flex items-center gap-1 shadow-2xs cursor-pointer"
+                    >
+                      Semana Siguiente &rarr;
+                    </button>
+                  </div>
+                  <div className="text-center sm:text-right">
+                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest block">
+                      Período Semanal
+                    </span>
+                    <span className="text-xs font-extrabold text-slate-800">
+                      Del {displayDays[0]?.getDate()}/{displayDays[0]?.getMonth() + 1}/{displayDays[0]?.getFullYear()} al {displayDays[displayDays.length - 1]?.getDate()}/{displayDays[displayDays.length - 1]?.getMonth() + 1}/{displayDays[displayDays.length - 1]?.getFullYear()}
+                    </span>
+                  </div>
+                </>
+              )}
+
+              {reportDateMode === "mes" && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setMonthOffset(monthOffset - 1)}
+                      className="px-3 py-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-100 text-slate-700 font-bold text-xs flex items-center gap-1 shadow-2xs cursor-pointer"
+                    >
+                      &larr; Mes Anterior
+                    </button>
+                    <button
+                      onClick={() => setMonthOffset(0)}
+                      className={cn(
+                        "px-3 py-2 border rounded-xl font-bold text-xs transition-all cursor-pointer shadow-2xs",
+                        monthOffset === 0
+                          ? "bg-blue-600 text-white border-blue-600 font-extrabold"
+                          : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                      )}
+                    >
+                      Mes Actual
+                    </button>
+                    <button
+                      onClick={() => setMonthOffset(monthOffset + 1)}
+                      className="px-3 py-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-100 text-slate-700 font-bold text-xs flex items-center gap-1 shadow-2xs cursor-pointer"
+                    >
+                      Mes Siguiente &rarr;
+                    </button>
+                  </div>
+                  <div className="text-center sm:text-right">
+                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest block">
+                      Período Mensual ({displayDays.length} días)
+                    </span>
+                    <span className="text-xs font-extrabold text-slate-800 capitalize">
+                      {displayDays[0]?.toLocaleString("es-AR", { month: "long", year: "numeric" })}
+                    </span>
+                  </div>
+                </>
+              )}
+
+              {reportDateMode === "custom" && (
+                <div className="flex justify-between items-center w-full">
+                  <span className="text-xs font-bold text-slate-500">
+                    Rango Personalizado ({displayDays.length} días)
+                  </span>
+                  <span className="text-xs font-extrabold text-slate-800">
+                    Del {displayDays[0]?.getDate()}/{displayDays[0]?.getMonth() + 1}/{displayDays[0]?.getFullYear()} al {displayDays[displayDays.length - 1]?.getDate()}/{displayDays[displayDays.length - 1]?.getMonth() + 1}/{displayDays[displayDays.length - 1]?.getFullYear()}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Color Legend Bar */}
+            <div className="flex flex-wrap items-center gap-3 p-3 bg-white border border-slate-200 rounded-2xl text-xs font-bold text-slate-600 shadow-2xs">
+              <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Identificadores:</span>
+              <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-800 px-2.5 py-1 rounded-lg border border-emerald-200/60">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                <span>Presente / Jornada Completa (Verde)</span>
+              </div>
+              <div className="flex items-center gap-1.5 bg-amber-50 text-amber-800 px-2.5 py-1 rounded-lg border border-amber-200/60">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                <span>Incompleto (Amarillo)</span>
+              </div>
+              <div className="flex items-center gap-1.5 bg-slate-100 text-slate-700 px-2.5 py-1 rounded-lg border border-slate-300">
+                <span className="w-2.5 h-2.5 rounded-full bg-slate-500 animate-pulse" />
+                <span>En curso (Gris)</span>
+              </div>
+              <div className="flex items-center gap-1.5 bg-rose-50 text-rose-800 px-2.5 py-1 rounded-lg border border-rose-200/60">
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                <span>Ausente (Rojo)</span>
+              </div>
+              <div className="flex items-center gap-1.5 bg-slate-50 text-slate-500 px-2.5 py-1 rounded-lg border border-slate-200/60">
+                <span className="w-2.5 h-2.5 rounded-full bg-slate-300" />
+                <span>Sin Turno / Futuro</span>
+              </div>
+            </div>
+
+            {/* Grid Table */}
+            <div className="overflow-x-auto w-full border border-slate-200 rounded-2xl bg-white shadow-sm">
+              <table className="w-full text-left border-collapse min-w-[900px]">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 text-[10px] font-black uppercase tracking-wider">
+                    <th className="p-3.5 w-44 min-w-[160px] sticky left-0 bg-slate-50 z-10 border-r border-slate-200">
+                      Operario
+                    </th>
+                    {displayDays.map((d, i) => {
+                      const dayNames = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+                      const dayName = dayNames[d.getDay()];
+                      const dateNum = d.getDate();
+                      const monthNum = d.getMonth() + 1;
+                      const isToday = d.toDateString() === new Date().toDateString();
+
+                      return (
+                        <th
+                          key={i}
+                          className={cn(
+                            "p-3 text-center border-r border-slate-200 min-w-[110px]",
+                            isToday ? "bg-blue-50/80 text-blue-700" : ""
+                          )}
+                        >
+                          <span className="block text-[11px] font-black">{dayName}</span>
+                          <span className="block text-[10px] font-bold text-slate-400 mt-0.5">
+                            {String(dateNum).padStart(2, "0")}/{String(monthNum).padStart(2, "0")}
+                          </span>
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-xs">
+                  {activeOperarios
+                    .filter((op: any) => reportUserFilter === "Todos" || op.nombre === reportUserFilter)
+                    .map((op: any) => {
+                      const assignedSchedule = `${op.horario_entrada || "08:00"} - ${op.horario_salida || "17:00"}`;
+
+                      return (
+                        <tr key={op.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="p-3 font-extrabold text-slate-800 sticky left-0 bg-white border-r border-slate-200 z-10 shadow-2xs">
+                            <div className="flex items-center gap-2">
+                              <div className="w-7 h-7 rounded-full bg-slate-100 text-slate-700 font-black flex items-center justify-center text-xs shrink-0">
+                                {op.nombre?.charAt(0)}
+                              </div>
+                              <div>
+                                <span className="block text-xs font-black text-slate-800 leading-tight">
+                                  {op.nombre}
+                                </span>
+                                <span className="block text-[9px] font-bold text-slate-400 mt-0.5">
+                                  {assignedSchedule}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+
+                          {displayDays.map((d, i) => {
+                            const dateStr = normalizeDateStr(d);
+                            const todayStr = normalizeDateStr(new Date());
+                            const isFuture = d.getTime() > new Date().setHours(23, 59, 59, 999);
+                            const isToday = d.toDateString() === new Date().toDateString();
+                            const isPastDay = dateStr < todayStr;
+
+                            // Find logs for this op on this date
+                            const dayLogs = logs.filter((l) => {
+                              const normOpName = l.operario_nombre?.toLowerCase();
+                              return normOpName === op.nombre?.toLowerCase() && normalizeDateStr(l.inicio) === dateStr;
+                            });
+
+                            // Find if there's a scheduled shift in localStorage
+                            const hasScheduledShift = shifts.some(
+                              (s) => s.operarioNombre?.toLowerCase() === op.nombre?.toLowerCase() && s.fecha === dateStr
+                            );
+
+                            let checkInStr = "-";
+                            let checkOutStr = "-";
+                            let isOngoing = false;
+                            let totalWorkedMin = 0;
+
+                            if (dayLogs.length > 0) {
+                              const sorted = [...dayLogs].sort((a, b) => new Date(a.inicio).getTime() - new Date(b.inicio).getTime());
+                              const first = sorted[0];
+                              const last = sorted[sorted.length - 1];
+
+                              checkInStr = formatArgTime(first.inicio);
+
+                              if (last.fin) {
+                                checkOutStr = formatArgTime(last.fin);
+                              } else {
+                                if (isPastDay) {
+                                  // Past day with open log -> Option 2 automatic closure / incomplete
+                                  checkOutStr = "Sin Cierre";
+                                  isOngoing = false;
+                                } else {
+                                  checkOutStr = "En curso";
+                                  isOngoing = true;
+                                }
+                              }
+
+                              totalWorkedMin = sorted.reduce((acc, l) => acc + (l.duracion_minutos || l.duracion || 0), 0);
+                            }
+
+                            // Determine status per user requirements:
+                            // "Incompleto" -> Yellow
+                            // "En curso" -> Gray
+                            // "Presente / Completo" -> Green
+                            // "Ausente" -> Red
+                            let status: "verde" | "amarillo" | "gris_encurso" | "rojo" | "gris" = "gris";
+
+                            if (dayLogs.length > 0) {
+                              if (isOngoing) {
+                                status = "gris_encurso";
+                              } else if (totalWorkedMin < 240 || (isPastDay && checkOutStr === "Sin Cierre")) {
+                                status = "amarillo"; // Incompleto
+                              } else {
+                                status = "verde";
+                              }
+                            } else {
+                              if (!isFuture && ((d.getDay() >= 1 && d.getDay() <= 5) || hasScheduledShift)) {
+                                status = "rojo";
+                              } else {
+                                status = "gris";
+                              }
+                            }
+
+                            return (
+                              <td
+                                key={i}
+                                className={cn(
+                                  "p-2 border-r border-slate-200 text-center align-middle",
+                                  isToday ? "bg-blue-50/20" : ""
+                                )}
+                              >
+                                {status === "verde" && (
+                                  <button
+                                    onClick={() => setSelectedCellDetail({ op, dateStr, dayLogs, status: "Presente (Completo)", checkInStr, checkOutStr, totalWorkedMin, assignedSchedule })}
+                                    className="w-full bg-emerald-50/90 hover:bg-emerald-100/90 text-emerald-800 border border-emerald-200/80 rounded-xl p-2 transition-all cursor-pointer shadow-2xs flex flex-col items-center gap-1"
+                                  >
+                                    <div className="flex items-center gap-1 text-[10px] font-black uppercase">
+                                      <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                                      <span>Presente</span>
+                                    </div>
+                                    <span className="text-[10px] font-extrabold text-emerald-950 block">
+                                      {checkInStr} - {checkOutStr}
+                                    </span>
+                                    <span className="text-[9px] font-bold text-emerald-700 block">
+                                      {Math.floor(totalWorkedMin / 60)}h {totalWorkedMin % 60}m
+                                    </span>
+                                  </button>
+                                )}
+
+                                {status === "amarillo" && (
+                                  <button
+                                    onClick={() => setSelectedCellDetail({ op, dateStr, dayLogs, status: "Incompleto", checkInStr, checkOutStr, totalWorkedMin, assignedSchedule })}
+                                    className="w-full bg-amber-50/90 hover:bg-amber-100/90 text-amber-800 border border-amber-200/80 rounded-xl p-2 transition-all cursor-pointer shadow-2xs flex flex-col items-center gap-1"
+                                  >
+                                    <div className="flex items-center gap-1 text-[10px] font-black uppercase">
+                                      <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                                      <span>Incompleto</span>
+                                    </div>
+                                    <span className="text-[10px] font-extrabold text-amber-950 block">
+                                      {checkInStr} - {checkOutStr}
+                                    </span>
+                                    <span className="text-[9px] font-bold text-amber-700 block">
+                                      {Math.floor(totalWorkedMin / 60)}h {totalWorkedMin % 60}m
+                                    </span>
+                                  </button>
+                                )}
+
+                                {status === "gris_encurso" && (
+                                  <button
+                                    onClick={() => setSelectedCellDetail({ op, dateStr, dayLogs, status: "En curso", checkInStr, checkOutStr, totalWorkedMin, assignedSchedule })}
+                                    className="w-full bg-slate-100/90 hover:bg-slate-200/80 text-slate-700 border border-slate-300/80 rounded-xl p-2 transition-all cursor-pointer shadow-2xs flex flex-col items-center gap-1"
+                                  >
+                                    <div className="flex items-center gap-1 text-[10px] font-black uppercase">
+                                      <span className="w-2 h-2 rounded-full bg-slate-500 animate-pulse shrink-0" />
+                                      <span>En curso</span>
+                                    </div>
+                                    <span className="text-[10px] font-extrabold text-slate-800 block">
+                                      {checkInStr} - {checkOutStr}
+                                    </span>
+                                    <span className="text-[9px] font-bold text-slate-600 block">
+                                      {Math.floor(totalWorkedMin / 60)}h {totalWorkedMin % 60}m
+                                    </span>
+                                  </button>
+                                )}
+
+                                {status === "rojo" && (
+                                  <button
+                                    onClick={() => setSelectedCellDetail({ op, dateStr, dayLogs, status: "Ausente", checkInStr: "-", checkOutStr: "-", totalWorkedMin: 0, assignedSchedule })}
+                                    className="w-full bg-rose-50/90 hover:bg-rose-100/90 text-rose-800 border border-rose-200/80 rounded-xl p-2 transition-all cursor-pointer shadow-2xs flex flex-col items-center gap-1"
+                                  >
+                                    <div className="flex items-center gap-1 text-[10px] font-black uppercase">
+                                      <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+                                      <span>Ausente</span>
+                                    </div>
+                                    <span className="text-[9px] font-bold text-rose-700 block">
+                                      Sin Fichada
+                                    </span>
+                                  </button>
+                                )}
+
+                                {status === "gris" && (
+                                  <div className="w-full bg-slate-50 text-slate-400 border border-slate-100 rounded-xl p-2 text-center">
+                                    <span className="text-[10px] font-medium text-slate-300 block">
+                                      -
+                                    </span>
+                                  </div>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Cell Detail Modal */}
+            {selectedCellDetail && (
+              <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-lg w-full p-6 animate-in fade-in zoom-in-95 flex flex-col gap-4">
+                  <div className="flex justify-between items-start border-b border-slate-100 pb-3">
+                    <div>
+                      <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest block">
+                        Detalle de Actividad Diaria
+                      </span>
+                      <h3 className="text-lg font-black text-slate-800">
+                        {selectedCellDetail.op.nombre}
+                      </h3>
+                      <span className="text-xs font-bold text-slate-500">
+                        Fecha: {selectedCellDetail.dateStr.split("-").reverse().join("/")}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setSelectedCellDetail(null)}
+                      className="p-1 text-slate-400 hover:text-slate-600 rounded-lg text-lg font-bold"
+                    >
+                      &times;
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl">
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">
+                        Horario Asignado
+                      </span>
+                      <span className="font-extrabold text-slate-700">
+                        {selectedCellDetail.assignedSchedule}
+                      </span>
+                    </div>
+                    <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl">
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">
+                        Estado
+                      </span>
+                      <span className={cn(
+                        "font-black text-xs uppercase px-2 py-0.5 rounded-md inline-block mt-0.5",
+                        selectedCellDetail.status.includes("Presente") ? "bg-emerald-100 text-emerald-800" :
+                        selectedCellDetail.status === "Ausente" ? "bg-rose-100 text-rose-800" :
+                        "bg-amber-100 text-amber-800"
+                      )}>
+                        {selectedCellDetail.status}
+                      </span>
+                    </div>
+
+                    <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl">
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">
+                        Ingreso Registrado
+                      </span>
+                      <span className="font-black text-blue-600 text-sm">
+                        {selectedCellDetail.checkInStr}
+                      </span>
+                    </div>
+                    <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl">
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">
+                        Egreso Registrado
+                      </span>
+                      <span className="font-black text-blue-600 text-sm">
+                        {selectedCellDetail.checkOutStr}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">
+                      Fichadas / Tareas Realizadas
+                    </span>
+                    <div className="max-h-40 overflow-y-auto space-y-2">
+                      {selectedCellDetail.dayLogs.map((l: any, idx: number) => (
+                        <div key={idx} className="p-2.5 bg-slate-50 border border-slate-100 rounded-xl text-xs flex justify-between items-center">
+                          <div>
+                            <span className="font-extrabold text-slate-700 block">
+                              {l.accion || "Turno Activo"}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              {formatArgTime(l.inicio)} {l.fin ? `- ${formatArgTime(l.fin)}` : "(En curso)"}
+                            </span>
+                          </div>
+                          {l.duracion_minutos && (
+                            <span className="font-black text-slate-600 bg-white px-2 py-1 rounded-lg border border-slate-200 text-[10px]">
+                              {l.duracion_minutos} min
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                      {selectedCellDetail.dayLogs.length === 0 && (
+                        <div className="p-4 text-center text-slate-400 text-xs font-bold bg-slate-50 rounded-xl">
+                          Sin fiches registrados para este operario en esta fecha.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-2 border-t border-slate-100">
+                    <button
+                      onClick={() => setSelectedCellDetail(null)}
+                      className="px-5 py-2 bg-slate-900 text-white font-bold text-xs rounded-xl hover:bg-slate-800 transition-colors cursor-pointer"
+                    >
+                      Cerrar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* TAB 1: TIMESHEET AND HOURS MATRIX */}
         {activeTab === "timesheet" && (

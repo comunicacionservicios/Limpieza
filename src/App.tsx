@@ -2417,6 +2417,403 @@ function OperarioTaskHistory({ user }: { user: Operario }) {
 
 // -- Main App --
 
+function PersonalManagerView() {
+  const [users, setUsers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editingUser, setEditingUser] = useState<any | null>(null);
+  const [isAdding, setIsAdding] = useState(false);
+  const [activeSubTab, setActiveSubTab] = useState<"timesheet" | "users">("timesheet");
+
+  const [formData, setFormData] = useState({
+    id: "",
+    nombre: "",
+    usuario: "",
+    pin: "",
+    rol: "operario",
+    activo: true,
+    horario_entrada: "08:00",
+    horario_salida: "17:00",
+  });
+
+  const [schedules, setSchedules] = useState<any[]>([]);
+  const [scheduleData, setScheduleData] = useState({
+    operarioNombre: "",
+    fecha: "",
+    inicioEstimado: "08:00",
+    finEstimado: "17:00",
+  });
+
+  const fetchUsers = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.from("users").select("*").order("nombre");
+      if (error) throw error;
+      setUsers(data || []);
+    } catch (e: any) {
+      console.error(e);
+      alert("Error cargando usuarios: " + e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadSchedules = () => {
+    try {
+      const saved = localStorage.getItem("limpieza_turnos_scheduled");
+      if (saved) {
+         setSchedules(JSON.parse(saved));
+      }
+    } catch(e) {}
+  };
+
+  useEffect(() => {
+    fetchUsers();
+    loadSchedules();
+  }, []);
+
+  const handleSaveUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.nombre || !formData.usuario || !formData.pin) {
+      alert("Completar todos los campos requeridos");
+      return;
+    }
+
+    try {
+      if (editingUser) {
+        const { error } = await supabase.from("users").update({
+          nombre: formData.nombre,
+          usuario: formData.usuario,
+          pin: formData.pin,
+          rol: formData.rol,
+          activo: formData.activo,
+          horario_entrada: formData.horario_entrada,
+          horario_salida: formData.horario_salida,
+        }).eq("id", editingUser.id);
+        if (error) throw error;
+        alert("Usuario actualizado con horario asignado");
+      } else {
+        const newId = formData.usuario.toLowerCase().trim();
+        const { error } = await supabase.from("users").insert({
+          id: newId,
+          nombre: formData.nombre,
+          usuario: formData.usuario,
+          pin: formData.pin,
+          rol: formData.rol,
+          activo: formData.activo,
+          horario_entrada: formData.horario_entrada,
+          horario_salida: formData.horario_salida,
+        });
+        if (error) throw error;
+        alert("Usuario creado con horario asignado");
+      }
+      setIsAdding(false);
+      setEditingUser(null);
+      fetchUsers();
+    } catch (e: any) {
+      console.error(e);
+      alert("Error: " + e.message);
+    }
+  };
+
+  const handleEdit = (u: any) => {
+    setEditingUser(u);
+    setFormData({
+      id: u.id,
+      nombre: u.nombre || "",
+      usuario: u.usuario || "",
+      pin: u.pin || "",
+      rol: u.rol || "operario",
+      activo: u.activo ?? true,
+      horario_entrada: u.horario_entrada || "08:00",
+      horario_salida: u.horario_salida || "17:00",
+    });
+    setIsAdding(true);
+    setActiveSubTab("users");
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("¿Seguro que desea eliminar este usuario?")) return;
+    try {
+       const { error } = await supabase.from("users").delete().eq("id", id);
+       if (error) throw error;
+       fetchUsers();
+    } catch (e: any) {
+       alert("Error al eliminar: " + e.message);
+    }
+  };
+
+  const handleSaveSchedule = (e: React.FormEvent) => {
+     e.preventDefault();
+     if (!scheduleData.operarioNombre || !scheduleData.fecha || !scheduleData.inicioEstimado) {
+       alert("Completar campos de horario"); return;
+     }
+     const newSchedules = [...schedules.filter(s => !(s.operarioNombre === scheduleData.operarioNombre && s.fecha === scheduleData.fecha)), scheduleData];
+     setSchedules(newSchedules);
+     localStorage.setItem("limpieza_turnos_scheduled", JSON.stringify(newSchedules));
+     setScheduleData({...scheduleData, fecha: "", inicioEstimado: "08:00", finEstimado: "17:00"});
+     alert("Horario de turno guardado");
+  };
+
+  const handleDeleteSchedule = (idx: number) => {
+     const newSchedules = schedules.filter((_, i) => i !== idx);
+     setSchedules(newSchedules);
+     localStorage.setItem("limpieza_turnos_scheduled", JSON.stringify(newSchedules));
+  };
+
+  return (
+    <div className="flex flex-col gap-6 max-w-6xl mx-auto w-full">
+      {/* Top Header Card */}
+      <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+            Gestión Integral del Personal y Asistencia
+          </h2>
+          <p className="text-xs text-slate-400 font-semibold mt-1">
+            Control de usuarios, asignación de horarios habituales y seguimiento en hoja de horas semanal.
+          </p>
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={() => {
+              setEditingUser(null);
+              setFormData({id:"", nombre:"", usuario:"", pin:"", rol:"operario", activo:true, horario_entrada: "08:00", horario_salida: "17:00"});
+              setIsAdding(!isAdding);
+              if (!isAdding) setActiveSubTab("users");
+            }}
+            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white font-bold text-xs rounded-xl hover:bg-blue-700 transition-colors cursor-pointer shadow-sm"
+          >
+            {isAdding ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            {isAdding ? "Cancelar" : "Nuevo Usuario"}
+          </button>
+        </div>
+      </div>
+
+      {/* Sub Tab Navigation */}
+      <div className="flex bg-slate-200/60 p-1 rounded-2xl w-full max-w-md">
+        <button
+          onClick={() => setActiveSubTab("timesheet")}
+          className={cn(
+            "flex-1 py-2.5 px-4 rounded-xl text-xs font-black transition-all cursor-pointer",
+            activeSubTab === "timesheet"
+              ? "bg-white text-blue-600 shadow-xs font-black"
+              : "text-slate-500 hover:text-slate-700 font-bold"
+          )}
+        >
+          📅 Hoja de Horas y Control Semanal
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab("users")}
+          className={cn(
+            "flex-1 py-2.5 px-4 rounded-xl text-xs font-black transition-all cursor-pointer",
+            activeSubTab === "users"
+              ? "bg-white text-blue-600 shadow-xs font-black"
+              : "text-slate-500 hover:text-slate-700 font-bold"
+          )}
+        >
+          👥 Usuarios y Horarios Asignados ({users.length})
+        </button>
+      </div>
+
+      {/* SUB TAB 1: TIMESHEET AND WEEKLY CALENDAR */}
+      {activeSubTab === "timesheet" && (
+        <SupervisorTimesheetModule operarios={users} />
+      )}
+
+      {/* SUB TAB 2: USER MANAGEMENT & SCHEDULE ASSIGNMENT */}
+      {activeSubTab === "users" && (
+        <div className="flex flex-col gap-6 w-full">
+          {isAdding && (
+            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm animate-in fade-in slide-in-from-top-4">
+              <h3 className="text-lg font-black mb-4 text-slate-800">
+                {editingUser ? "Editar Usuario y Modificar Horario" : "Nuevo Usuario y Asignación de Horario"}
+              </h3>
+              <form onSubmit={handleSaveUser} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">Nombre Completo</label>
+                  <input type="text" value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})} className="w-full bg-slate-50 border border-slate-200 p-2.5 rounded-xl text-sm font-bold" required />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">Nombre de Usuario (Login)</label>
+                  <input type="text" value={formData.usuario} onChange={e => setFormData({...formData, usuario: e.target.value})} className="w-full bg-slate-50 border border-slate-200 p-2.5 rounded-xl text-sm font-bold" required />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">PIN / Contraseña</label>
+                  <input type="text" value={formData.pin} onChange={e => setFormData({...formData, pin: e.target.value})} className="w-full bg-slate-50 border border-slate-200 p-2.5 rounded-xl text-sm font-bold" required />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">Rol</label>
+                  <select value={formData.rol} onChange={e => setFormData({...formData, rol: e.target.value})} className="w-full bg-slate-50 border border-slate-200 p-2.5 rounded-xl text-sm font-bold" required>
+                    <option value="operario">Operario</option>
+                    <option value="supervisor">Supervisor</option>
+                  </select>
+                </div>
+
+                {/* Asignación de Horarios por el Administrador */}
+                <div className="md:col-span-2 p-4 bg-blue-50/50 border border-blue-100 rounded-2xl grid grid-cols-1 md:grid-cols-2 gap-4 mt-1">
+                  <div>
+                    <label className="block text-xs font-black text-blue-900 mb-1 uppercase tracking-wider">Hora Ingreso Habitual</label>
+                    <input type="time" value={formData.horario_entrada} onChange={e => setFormData({...formData, horario_entrada: e.target.value})} className="w-full bg-white border border-slate-200 p-2.5 rounded-xl text-sm font-bold" required />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-black text-blue-900 mb-1 uppercase tracking-wider">Hora Egreso Habitual</label>
+                    <input type="time" value={formData.horario_salida} onChange={e => setFormData({...formData, horario_salida: e.target.value})} className="w-full bg-white border border-slate-200 p-2.5 rounded-xl text-sm font-bold" required />
+                  </div>
+                </div>
+
+                <div className="md:col-span-2 flex items-center gap-2 mt-2">
+                  <input type="checkbox" checked={formData.activo} onChange={e => setFormData({...formData, activo: e.target.checked})} id="activo-chk" />
+                  <label htmlFor="activo-chk" className="text-sm font-bold text-slate-700">Usuario Activo</label>
+                </div>
+                <div className="md:col-span-2 flex justify-end gap-2 mt-2">
+                  <button type="button" onClick={() => setIsAdding(false)} className="px-5 py-2.5 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200">
+                    Cancelar
+                  </button>
+                  <button type="submit" className="px-6 py-2.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700">
+                    Guardar Usuario y Horarios
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* User List Table */}
+          <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Nombre</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Usuario</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">PIN</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Rol</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Horario Asignado</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Estado</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {users.map(u => (
+                    <tr key={u.id} className="hover:bg-slate-50/50">
+                      <td className="px-6 py-4 font-bold text-slate-800 text-sm">{u.nombre}</td>
+                      <td className="px-6 py-4 font-mono text-slate-600 text-sm">{u.usuario}</td>
+                      <td className="px-6 py-4 font-mono text-slate-500 text-sm">{u.pin}</td>
+                      <td className="px-6 py-4">
+                        <span className={cn("text-[10px] font-black px-2 py-1 rounded uppercase tracking-wider", u.rol === "supervisor" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700")}>
+                          {u.rol}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 font-bold text-xs text-slate-700">
+                        <span className="bg-slate-100 border border-slate-200/80 px-2.5 py-1 rounded-lg">
+                          {u.horario_entrada || "08:00"} hs - {u.horario_salida || "17:00"} hs
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <span className={cn("w-3 h-3 rounded-full inline-block border-2 border-white shadow-sm", u.activo ? "bg-emerald-500" : "bg-rose-500")} title={u.activo ? "Activo" : "Inactivo"} />
+                      </td>
+                      <td className="px-6 py-4 flex items-center justify-end gap-2">
+                        <button onClick={() => handleEdit(u)} className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg flex items-center gap-1 text-xs font-bold" title="Modificar Horario y Datos">
+                          <Edit3 className="w-4 h-4" />
+                          <span className="hidden sm:inline">Modificar Horario</span>
+                        </button>
+                        <button onClick={() => handleDelete(u.id)} className="p-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg" title="Eliminar">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {users.length === 0 && !loading && (
+                    <tr>
+                      <td colSpan={7} className="text-center py-8 text-slate-400 font-bold text-xs uppercase tracking-widest">
+                        Sin usuarios
+                      </td>
+                    </tr>
+                  )}
+                  {loading && (
+                    <tr>
+                      <td colSpan={7} className="text-center py-8 text-slate-400 font-bold text-xs uppercase tracking-widest">
+                        Cargando...
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Quick Schedule Shift Adder */}
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
+            <h3 className="text-lg font-black mb-4 text-slate-800">
+              Gestión de Horarios Específicos por Fecha / Turno
+            </h3>
+            <form onSubmit={handleSaveSchedule} className="flex flex-col md:flex-row gap-4 items-end mb-6">
+              <div className="w-full md:w-1/4">
+                <label className="block text-xs font-bold text-slate-500 mb-1">Operario</label>
+                <select value={scheduleData.operarioNombre} onChange={e => setScheduleData({...scheduleData, operarioNombre: e.target.value})} className="w-full bg-slate-50 border border-slate-200 p-2.5 rounded-xl text-sm font-bold" required>
+                  <option value="">Seleccionar...</option>
+                  {users.filter(u => u.rol === "operario").map(u => (
+                    <option key={u.id} value={u.nombre}>{u.nombre}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="w-full md:w-1/4">
+                <label className="block text-xs font-bold text-slate-500 mb-1">Fecha Programada</label>
+                <input type="date" value={scheduleData.fecha} onChange={e => setScheduleData({...scheduleData, fecha: e.target.value})} className="w-full bg-slate-50 border border-slate-200 p-2.5 rounded-xl text-sm font-bold" required />
+              </div>
+              <div className="w-full md:w-1/4">
+                <label className="block text-xs font-bold text-slate-500 mb-1">Hora Ingreso Estimada</label>
+                <input type="time" value={scheduleData.inicioEstimado} onChange={e => setScheduleData({...scheduleData, inicioEstimado: e.target.value})} className="w-full bg-slate-50 border border-slate-200 p-2.5 rounded-xl text-sm font-bold" required />
+              </div>
+              <div className="w-full md:w-1/4">
+                <label className="block text-xs font-bold text-slate-500 mb-1">Hora Egreso Estimada</label>
+                <input type="time" value={scheduleData.finEstimado} onChange={e => setScheduleData({...scheduleData, finEstimado: e.target.value})} className="w-full bg-slate-50 border border-slate-200 p-2.5 rounded-xl text-sm font-bold" required />
+              </div>
+              <button type="submit" className="px-6 py-2.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 shrink-0 h-[46px]">
+                Agregar Turno
+              </button>
+            </form>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Operario</th>
+                    <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Fecha</th>
+                    <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Horario Previsto</th>
+                    <th className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Quitar</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {schedules.map((s, idx) => (
+                    <tr key={idx}>
+                      <td className="px-4 py-3 text-sm font-bold text-slate-700">{s.operarioNombre}</td>
+                      <td className="px-4 py-3 text-sm font-mono text-slate-500">{s.fecha}</td>
+                      <td className="px-4 py-3 text-sm font-mono text-slate-500">{s.inicioEstimado} - {s.finEstimado || "17:00"} hs</td>
+                      <td className="px-4 py-3 text-right">
+                        <button onClick={() => handleDeleteSchedule(idx)} className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-500 rounded-lg">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {schedules.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="text-center py-6 text-slate-400 font-bold text-xs uppercase tracking-widest">
+                        Sin horarios programados
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const installProps = usePWAInstall();
   useReminderChecker();
@@ -8563,6 +8960,135 @@ function SupervisorDashboard({
   user: Operario;
   onLogout: () => void;
 }) {
+  const [activeTab, setActiveTab] = useState<"live" | "personal" | "hoja_de_horas">("live");
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex font-sans text-slate-800">
+      {/* SIDEBAR */}
+      <aside className="w-64 bg-slate-900 text-slate-100 flex flex-col hidden md:flex flex-shrink-0">
+        <div className="p-6 border-b border-slate-800">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-blue-500 rounded-xl flex items-center justify-center p-1.5 text-white font-black text-lg shadow-md shadow-blue-500/20">
+              A
+            </div>
+            <div>
+              <h1 className="font-black text-sm text-white tracking-tight leading-tight">
+                Arévalo Servicios
+              </h1>
+              <span className="text-[10px] font-black uppercase text-slate-400 block tracking-widest mt-0.5">
+                SUPERVISOR
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <nav className="flex-1 p-4 space-y-2">
+          <button
+            onClick={() => setActiveTab("live")}
+            className={cn(
+              "w-full flex items-center gap-3 px-4 py-3 text-sm font-bold rounded-xl transition-all",
+              activeTab === "live"
+                ? "bg-blue-600 text-white shadow-md shadow-blue-600/20"
+                : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            )}
+          >
+            <Activity className="w-5 h-5" />
+            Monitoreo en Vivo
+          </button>
+          
+          <button
+            onClick={() => setActiveTab("personal")}
+            className={cn(
+              "w-full flex items-center gap-3 px-4 py-3 text-sm font-bold rounded-xl transition-all",
+              activeTab === "personal"
+                ? "bg-blue-600 text-white shadow-md shadow-blue-600/20"
+                : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            )}
+          >
+            <Users className="w-5 h-5" />
+            Personal
+          </button>
+
+          <button
+            onClick={() => setActiveTab("hoja_de_horas")}
+            className={cn(
+              "w-full flex items-center gap-3 px-4 py-3 text-sm font-bold rounded-xl transition-all",
+              activeTab === "hoja_de_horas"
+                ? "bg-blue-600 text-white shadow-md shadow-blue-600/20"
+                : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            )}
+          >
+            <Calendar className="w-5 h-5" />
+            Hoja de Horas
+          </button>
+        </nav>
+
+        <div className="p-4 border-t border-slate-800">
+          <div className="flex items-center gap-3 px-4 py-3 mb-2 bg-slate-800 rounded-xl">
+             <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold">
+                {user.nombre ? user.nombre.substring(0, 2).toUpperCase() : "SP"}
+             </div>
+             <span className="text-sm font-bold truncate">{user.nombre}</span>
+          </div>
+          <button
+            onClick={onLogout}
+            className="w-full flex items-center gap-3 px-4 py-3 text-sm font-bold text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 rounded-xl transition-all"
+          >
+            <LogOut className="w-5 h-5" />
+            Cerrar Sesión
+          </button>
+        </div>
+      </aside>
+
+      {/* MOBILE HEADER (ONLY SHOWS ON MOBILE) */}
+      <div className="md:hidden fixed top-0 left-0 right-0 bg-slate-900 text-white z-50 flex items-center justify-between p-4 shadow-md">
+        <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center text-white font-black text-sm">
+              A
+            </div>
+            <h1 className="font-black text-sm text-white tracking-tight leading-tight">
+              Arévalo
+            </h1>
+        </div>
+        <div className="flex items-center gap-2">
+           <select
+             value={activeTab}
+             onChange={(e) => setActiveTab(e.target.value as any)}
+             className="bg-slate-800 text-white text-xs font-bold rounded-lg px-2 py-1.5 border-none outline-none"
+           >
+              <option value="live">Monitoreo</option>
+              <option value="personal">Personal</option>
+              <option value="hoja_de_horas">Hoja de Horas</option>
+           </select>
+           <button onClick={onLogout} className="p-1.5 text-rose-400 bg-slate-800 rounded-lg">
+             <LogOut className="w-4 h-4" />
+           </button>
+        </div>
+      </div>
+
+      {/* MAIN CONTENT AREA */}
+      <main className="flex-1 flex flex-col h-screen overflow-hidden pt-16 md:pt-0">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-8">
+           {activeTab === "live" ? (
+             <LiveStatusView user={user} onLogout={onLogout} />
+           ) : activeTab === "personal" ? (
+             <PersonalManagement />
+           ) : (
+             <SupervisorTimesheetModule />
+           )}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function LiveStatusView({
+  user,
+  onLogout,
+}: {
+  user: Operario;
+  onLogout: () => void;
+}) {
   const [operarios, setOperarios] = useState<any[]>([]);
   const [registros, setRegistros] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -8820,56 +9346,17 @@ function SupervisorDashboard({
 
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-800">
-      {/* MINIMAL DESIGNER HEADER */}
-      <header className="bg-white border-b border-slate-100 px-6 py-4 flex justify-between items-center sticky top-0 z-50 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center p-1.5 text-white font-black text-lg shadow-md shadow-blue-100">
-            A
-          </div>
-          <div>
-            <h1 className="font-black text-base text-slate-900 tracking-tight leading-tight">
-              Arévalo Servicios
-            </h1>
-            <p className="text-[10px] text-emerald-500 font-bold uppercase tracking-wider flex items-center gap-1">
-              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
-              Monitoreo en Vivo Activo
-            </p>
-          </div>
+    <div className="flex flex-col gap-6 max-w-5xl mx-auto w-full">
+      {/* TITLE AND LEGEND CARD */}
+      <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+            Estado en Vivo del Personal
+          </h2>
+          <p className="text-xs text-slate-400 font-semibold mt-1">
+            Visualización unificada de tiempo de trabajo, actividades en curso y descansos del equipo de Arévalo Servicios.
+          </p>
         </div>
-
-        <div className="flex items-center gap-4">
-          <div className="text-right hidden sm:block">
-            <span className="text-xs font-black uppercase text-slate-400 block tracking-widest">
-              SUPERVISOR
-            </span>
-            <span className="text-sm font-bold text-slate-700 block text-right">
-              {user.nombre}
-            </span>
-          </div>
-
-          <button
-            onClick={onLogout}
-            className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 text-slate-600 hover:bg-rose-50 hover:text-rose-600 font-black text-[11px] uppercase tracking-wider rounded-2xl transition-all border border-transparent hover:border-rose-100"
-          >
-            <LogOut className="w-4 h-4" />
-            Cerrar Sesión
-          </button>
-        </div>
-      </header>
-
-      {/* CORE LIVE CONTAINER */}
-      <main className="p-4 sm:p-8 flex-1 max-w-5xl mx-auto w-full flex flex-col gap-6">
-        {/* TITLE AND LEGEND CARD */}
-        <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div>
-            <h2 className="text-2xl font-black text-slate-900 tracking-tight">
-              Estado en Vivo del Personal
-            </h2>
-            <p className="text-xs text-slate-400 font-semibold mt-1">
-              Visualización unificada de tiempo de trabajo, actividades en curso y descansos del equipo de Arévalo Servicios.
-            </p>
-          </div>
 
           {/* STATUS COLOR LEGEND */}
           <div className="flex flex-wrap gap-3 p-3 bg-slate-50 border border-slate-100 rounded-2xl w-full md:w-auto">
@@ -9281,8 +9768,7 @@ function SupervisorDashboard({
             </div>
           </div>
         )}
-      </main>
-    </div>
+      </div>
   );
 }
 
