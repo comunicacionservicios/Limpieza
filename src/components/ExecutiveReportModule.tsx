@@ -1434,20 +1434,17 @@ export function ExecutiveReportModule({ operarios = [] }: ExecutiveReportProps) 
             {/* MEMBRETE */}
             <div className="flex justify-between items-start border-b-2 border-slate-900 pb-5 mb-6">
               <div>
-                <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight uppercase">
-                  ARÉVALO SERVICIOS INTEGRALES
+                <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+                  Arevalo Servicios Sociales
                 </h1>
-                <p className="text-[11px] font-bold text-slate-600 uppercase tracking-widest mt-0.5">
-                  Control de Gestión Operativa &bull; Recursos Humanos
-                </p>
-                <p className="text-xs text-slate-700 font-semibold mt-1">
-                  Dirección de Operaciones &bull; {printConfig.showTareas ? "Reporte Mensual de Asistencia y Servicios" : "Reporte Mensual de Presentismo y Control Horario"}
+                <p className="text-sm font-bold text-slate-600 mt-1">
+                  Control de gestión operativa - Área limpieza
                 </p>
               </div>
 
               <div className="text-right">
                 <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block">
-                  Período Liquidado
+                  Período Consultado
                 </span>
                 <span className="text-sm sm:text-base font-black text-blue-950 capitalize block">
                   {monthName}
