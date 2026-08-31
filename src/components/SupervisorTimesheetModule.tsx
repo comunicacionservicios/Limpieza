@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { formatArgDate, formatArgTime } from "../App";
 import { supabase } from "../lib/supabase";
+import { ExecutiveReportModule } from "./ExecutiveReportModule";
 import { 
   Clock, 
   UserX, 
@@ -23,7 +24,9 @@ import {
   CheckCircle,
   Clock3,
   UserCheck2,
-  Trash
+  Trash,
+  FileSpreadsheet,
+  BarChart3
 } from "lucide-react";
 
 interface ScheduledShift {
@@ -74,7 +77,7 @@ export function SupervisorTimesheetModule({
   const [reportUserFilter, setReportUserFilter] = useState("Todos");
 
   // Local tab system inside the Timesheet Module
-  const [activeTab, setActiveTab] = useState<"calendar" | "timesheet" | "absences" | "scheduler">("calendar");
+  const [activeTab, setActiveTab] = useState<"calendar" | "timesheet" | "absences" | "scheduler" | "reports">("calendar");
   const [selectedOperario, setSelectedOperario] = useState<string | null>(null);
 
   // Navigation Offsets State
@@ -749,6 +752,21 @@ export function SupervisorTimesheetModule({
             )}
           >
             🗓️ Planificar Turnos
+          </button>
+
+          <button
+            onClick={() => { setActiveTab("reports"); setSelectedOperario(null); }}
+            className={cn(
+              "px-5 py-3.5 font-bold text-xs tracking-wide transition-all border-b-2 flex items-center gap-2 whitespace-nowrap cursor-pointer",
+              activeTab === "reports"
+                ? "border-amber-600 text-amber-600 font-black"
+                : "border-transparent text-slate-400 hover:text-slate-600"
+            )}
+          >
+            📑 Reportes Gerenciales
+            <span className="bg-amber-100 text-amber-700 text-[9px] font-black rounded-lg px-2 py-0.5 border border-amber-200">
+              Mes & Tareas
+            </span>
           </button>
         </div>
 
@@ -1699,6 +1717,13 @@ export function SupervisorTimesheetModule({
                 </table>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* TAB 4: REPORTES GERENCIALES (MES Y TAREAS) */}
+        {activeTab === "reports" && (
+          <div className="w-full">
+            <ExecutiveReportModule operarios={activeOperarios} />
           </div>
         )}
       </div>

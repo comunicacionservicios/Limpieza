@@ -45,6 +45,8 @@ import {
   Settings,
   Shield,
   Download,
+  FileSpreadsheet,
+  BarChart3,
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import { clsx, type ClassValue } from "clsx";
@@ -58,6 +60,7 @@ import {
 import type { User as FirebaseUser } from "firebase/auth";
 
 import { SupervisorTimesheetModule } from "./components/SupervisorTimesheetModule";
+import { ExecutiveReportModule } from "./components/ExecutiveReportModule";
 import {
   BarChart,
   Bar,
@@ -8960,7 +8963,7 @@ function SupervisorDashboard({
   user: Operario;
   onLogout: () => void;
 }) {
-  const [activeTab, setActiveTab] = useState<"live" | "personal" | "hoja_de_horas">("live");
+  const [activeTab, setActiveTab] = useState<"live" | "personal" | "hoja_de_horas" | "reportes">("live");
 
   return (
     <div className="min-h-screen bg-slate-50 flex font-sans text-slate-800">
@@ -9021,6 +9024,19 @@ function SupervisorDashboard({
             <Calendar className="w-5 h-5" />
             Hoja de Horas
           </button>
+
+          <button
+            onClick={() => setActiveTab("reportes")}
+            className={cn(
+              "w-full flex items-center gap-3 px-4 py-3 text-sm font-bold rounded-xl transition-all",
+              activeTab === "reportes"
+                ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/20"
+                : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            )}
+          >
+            <FileSpreadsheet className="w-5 h-5" />
+            Reporte Gerencial
+          </button>
         </nav>
 
         <div className="p-4 border-t border-slate-800">
@@ -9059,6 +9075,7 @@ function SupervisorDashboard({
               <option value="live">Monitoreo</option>
               <option value="personal">Personal</option>
               <option value="hoja_de_horas">Hoja de Horas</option>
+              <option value="reportes">Reporte Gerencial</option>
            </select>
            <button onClick={onLogout} className="p-1.5 text-rose-400 bg-slate-800 rounded-lg">
              <LogOut className="w-4 h-4" />
@@ -9073,6 +9090,8 @@ function SupervisorDashboard({
              <LiveStatusView user={user} onLogout={onLogout} />
            ) : activeTab === "personal" ? (
              <PersonalManagement />
+           ) : activeTab === "reportes" ? (
+             <ExecutiveReportModule />
            ) : (
              <SupervisorTimesheetModule />
            )}

@@ -2,5 +2,5 @@
   "name": "Gestión de Limpieza",
   "description": "Aplicación web independiente para la Gestión del Sector de Limpieza regional Arévalo. Interfaz optimizada para móviles con botones grandes y base de datos Firebase.",
   "requestFramePermissions": ["geolocation", "notifications"],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
