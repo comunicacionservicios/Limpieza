@@ -481,7 +481,10 @@ export function ExecutiveReportModule({ operarios = [] }: ExecutiveReportProps) 
 
   // Trigger browser print for clean PDF export
   const handlePrint = () => {
-    window.print();
+    setActiveSubTab("imprimir");
+    setTimeout(() => {
+      window.print();
+    }, 150);
   };
 
   return (
@@ -1424,19 +1427,20 @@ export function ExecutiveReportModule({ operarios = [] }: ExecutiveReportProps) 
 
           {/* HOJA FORMAL IMPRIMIBLE */}
           <div
+            id="executive-report-printable"
             ref={printRef}
-            className="bg-white border border-slate-300 rounded-2xl p-8 sm:p-12 shadow-md max-w-4xl mx-auto w-full text-slate-900 print:border-none print:shadow-none print:p-0"
+            className="bg-white border border-slate-300 rounded-2xl p-8 sm:p-10 shadow-md max-w-4xl mx-auto w-full text-slate-900 print:border-none print:shadow-none print:p-0 print:m-0 print:max-w-none print:w-full"
           >
             {/* MEMBRETE */}
-            <div className="flex justify-between items-start border-b-2 border-slate-900 pb-6 mb-6">
+            <div className="flex justify-between items-start border-b-2 border-slate-900 pb-5 mb-6">
               <div>
-                <h1 className="text-2xl font-black text-slate-900 tracking-tight">
+                <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight uppercase">
                   ARÉVALO SERVICIOS INTEGRALES
                 </h1>
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mt-1">
+                <p className="text-[11px] font-bold text-slate-600 uppercase tracking-widest mt-0.5">
                   Control de Gestión Operativa &bull; Recursos Humanos
                 </p>
-                <p className="text-xs text-slate-600 mt-1">
+                <p className="text-xs text-slate-700 font-semibold mt-1">
                   Dirección de Operaciones &bull; {printConfig.showTareas ? "Reporte Mensual de Asistencia y Servicios" : "Reporte Mensual de Presentismo y Control Horario"}
                 </p>
               </div>
@@ -1445,48 +1449,48 @@ export function ExecutiveReportModule({ operarios = [] }: ExecutiveReportProps) 
                 <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block">
                   Período Liquidado
                 </span>
-                <span className="text-base font-black text-blue-900 capitalize block">
+                <span className="text-sm sm:text-base font-black text-blue-950 capitalize block">
                   {monthName}
                 </span>
-                <span className="text-[10px] text-slate-500 block mt-1">
-                  Emisión: {new Date().toLocaleDateString("es-AR")}
+                <span className="text-[10px] text-slate-600 font-medium block mt-1">
+                  Fecha Emisión: {new Date().toLocaleDateString("es-AR")}
                 </span>
               </div>
             </div>
 
             {/* RESUMEN EJECUTIVO (SI ESTÁ HABILITADO) */}
             {printConfig.showKpis && (
-              <div className="grid grid-cols-3 sm:grid-cols-4 gap-4 mb-8 bg-slate-50 border border-slate-200 rounded-xl p-4 text-center">
-                <div>
-                  <span className="text-[9px] font-black uppercase text-slate-400 block">
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-3 mb-6 bg-slate-50 border border-slate-300 rounded-xl p-3 text-center print-avoid-break">
+                <div className="p-1">
+                  <span className="text-[9px] font-black uppercase text-slate-500 block">
                     Presentismo Global
                   </span>
-                  <span className="text-lg font-black text-slate-900 block">
+                  <span className="text-base sm:text-lg font-black text-slate-900 block mt-0.5">
                     {globalKpis.globalPresentismo}%
                   </span>
                 </div>
-                <div>
-                  <span className="text-[9px] font-black uppercase text-slate-400 block">
+                <div className="p-1">
+                  <span className="text-[9px] font-black uppercase text-slate-500 block">
                     Horas Totales
                   </span>
-                  <span className="text-lg font-black text-slate-900 block">
+                  <span className="text-base sm:text-lg font-black text-slate-900 block mt-0.5">
                     {globalKpis.totalHorasStr}
                   </span>
                 </div>
-                <div>
-                  <span className="text-[9px] font-black uppercase text-slate-400 block">
+                <div className="p-1">
+                  <span className="text-[9px] font-black uppercase text-slate-500 block">
                     Personal Activo
                   </span>
-                  <span className="text-lg font-black text-slate-900 block">
+                  <span className="text-base sm:text-lg font-black text-slate-900 block mt-0.5">
                     {activeOperarios.length} operarios
                   </span>
                 </div>
                 {printConfig.showTareas && (
-                  <div>
-                    <span className="text-[9px] font-black uppercase text-slate-400 block">
+                  <div className="p-1">
+                    <span className="text-[9px] font-black uppercase text-slate-500 block">
                       Total Tareas
                     </span>
-                    <span className="text-lg font-black text-slate-900 block">
+                    <span className="text-base sm:text-lg font-black text-slate-900 block mt-0.5">
                       {globalKpis.totalTasks}
                     </span>
                   </div>
@@ -1496,13 +1500,13 @@ export function ExecutiveReportModule({ operarios = [] }: ExecutiveReportProps) 
 
             {/* TABLA DE ASISTENCIAS (SI ESTÁ HABILITADA) */}
             {printConfig.showPresentismo && (
-              <div className="mb-8">
-                <h3 className="text-xs font-black uppercase tracking-widest text-slate-700 mb-2">
+              <div className="mb-6 print-avoid-break">
+                <h3 className="text-[11px] font-black uppercase tracking-wider text-slate-800 mb-2 border-b border-slate-200 pb-1">
                   1. Cómputo Mensual de Asistencias, Inasistencias y Horas
                 </h3>
-                <table className="w-full text-left text-xs border-collapse border border-slate-300">
+                <table className="w-full text-left text-[11px] border-collapse border border-slate-400">
                   <thead>
-                    <tr className="bg-slate-100 text-[10px] font-black uppercase border-b border-slate-300">
+                    <tr className="bg-slate-100 text-[10px] font-black uppercase border-b border-slate-400 text-slate-800">
                       <th className="p-2 border-r border-slate-300">Operario</th>
                       <th className="p-2 border-r border-slate-300">Horario Asignado</th>
                       <th className="p-2 border-r border-slate-300 text-center">Días Presente</th>
@@ -1514,24 +1518,24 @@ export function ExecutiveReportModule({ operarios = [] }: ExecutiveReportProps) 
                   </thead>
                   <tbody>
                     {operariosReportStats.map((op, idx) => (
-                      <tr key={idx} className="border-b border-slate-200">
-                        <td className="p-2 font-bold border-r border-slate-200">{op.nombre}</td>
-                        <td className="p-2 font-mono text-[11px] border-r border-slate-200">
+                      <tr key={idx} className="border-b border-slate-300 hover:bg-slate-50/50">
+                        <td className="p-2 font-bold text-slate-900 border-r border-slate-300">{op.nombre}</td>
+                        <td className="p-2 font-mono text-[10px] text-slate-700 border-r border-slate-300 whitespace-nowrap">
                           {op.horario_entrada} - {op.horario_salida}
                         </td>
-                        <td className="p-2 text-center font-bold text-emerald-800 border-r border-slate-200">
+                        <td className="p-2 text-center font-bold text-emerald-800 border-r border-slate-300">
                           {op.diasPresentes}
                         </td>
-                        <td className="p-2 text-center font-bold text-amber-800 border-r border-slate-200">
+                        <td className="p-2 text-center font-bold text-amber-800 border-r border-slate-300">
                           {op.diasIncompletos}
                         </td>
-                        <td className="p-2 text-center font-bold text-rose-800 border-r border-slate-200">
+                        <td className="p-2 text-center font-bold text-rose-800 border-r border-slate-300">
                           {op.diasAusentes}
                         </td>
-                        <td className="p-2 text-center font-mono font-bold border-r border-slate-200">
+                        <td className="p-2 text-center font-mono font-bold text-slate-900 border-r border-slate-300 whitespace-nowrap">
                           {op.totalHorasFormatted}
                         </td>
-                        <td className="p-2 text-center font-black">{op.presentismoPct}%</td>
+                        <td className="p-2 text-center font-black text-slate-900">{op.presentismoPct}%</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1541,13 +1545,13 @@ export function ExecutiveReportModule({ operarios = [] }: ExecutiveReportProps) 
 
             {/* TABLA DE TAREAS RESUMIDAS (SI ESTÁ HABILITADA) */}
             {printConfig.showTareas && (
-              <div className="mb-8">
-                <h3 className="text-xs font-black uppercase tracking-widest text-slate-700 mb-2">
+              <div className="mb-6 print-avoid-break">
+                <h3 className="text-[11px] font-black uppercase tracking-wider text-slate-800 mb-2 border-b border-slate-200 pb-1">
                   2. Principales Tareas Ejecutadas en el Mes
                 </h3>
-                <table className="w-full text-left text-xs border-collapse border border-slate-300">
+                <table className="w-full text-left text-[11px] border-collapse border border-slate-400">
                   <thead>
-                    <tr className="bg-slate-100 text-[10px] font-black uppercase border-b border-slate-300">
+                    <tr className="bg-slate-100 text-[10px] font-black uppercase border-b border-slate-400 text-slate-800">
                       <th className="p-2 border-r border-slate-300">Tarea / Actividad</th>
                       <th className="p-2 border-r border-slate-300 text-center">Frecuencia</th>
                       <th className="p-2 border-r border-slate-300 text-center">Tiempo Dedicado</th>
@@ -1555,14 +1559,14 @@ export function ExecutiveReportModule({ operarios = [] }: ExecutiveReportProps) 
                     </tr>
                   </thead>
                   <tbody>
-                    {tasksBreakdown.slice(0, 8).map((t, idx) => (
-                      <tr key={idx} className="border-b border-slate-200">
-                        <td className="p-2 font-bold border-r border-slate-200">{t.name}</td>
-                        <td className="p-2 text-center border-r border-slate-200">{t.count}</td>
-                        <td className="p-2 text-center font-mono font-bold border-r border-slate-200">
+                    {tasksBreakdown.slice(0, 10).map((t, idx) => (
+                      <tr key={idx} className="border-b border-slate-300">
+                        <td className="p-2 font-bold text-slate-900 border-r border-slate-300">{t.name}</td>
+                        <td className="p-2 text-center text-slate-700 border-r border-slate-300">{t.count}</td>
+                        <td className="p-2 text-center font-mono font-bold text-slate-900 border-r border-slate-300 whitespace-nowrap">
                           {t.hoursFormatted}
                         </td>
-                        <td className="p-2 text-center font-black">{t.percentage}%</td>
+                        <td className="p-2 text-center font-black text-slate-900">{t.percentage}%</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1572,17 +1576,17 @@ export function ExecutiveReportModule({ operarios = [] }: ExecutiveReportProps) 
 
             {/* SECTOR DE FIRMAS (SI ESTÁ HABILITADO) */}
             {printConfig.showFirmas && (
-              <div className="grid grid-cols-2 gap-12 mt-16 pt-8 border-t border-slate-300 text-center text-xs">
+              <div className="grid grid-cols-2 gap-12 mt-12 pt-6 border-t border-slate-300 text-center text-xs print-avoid-break">
                 <div>
-                  <div className="w-48 border-b border-slate-400 mx-auto mb-2" />
+                  <div className="w-48 border-b border-slate-900 mx-auto mb-2" />
                   <span className="font-black text-slate-900 block">Firma del Supervisor</span>
-                  <span className="text-[10px] text-slate-500 block">Control y Validación de Fichadas</span>
+                  <span className="text-[10px] text-slate-600 block">Control y Validación Operativa</span>
                 </div>
 
                 <div>
-                  <div className="w-48 border-b border-slate-400 mx-auto mb-2" />
+                  <div className="w-48 border-b border-slate-900 mx-auto mb-2" />
                   <span className="font-black text-slate-900 block">Conformidad Gerencia</span>
-                  <span className="text-[10px] text-slate-500 block">Aprobación de Liquidación</span>
+                  <span className="text-[10px] text-slate-600 block">Aprobación de Liquidación</span>
                 </div>
               </div>
             )}
